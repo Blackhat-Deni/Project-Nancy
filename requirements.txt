@@ -3,3 +3,6 @@ uvicorn==0.30.6
 pydantic==2.8.2
 sqlalchemy==2.0.35
 python-dotenv==1.0.1
+docling==2.14.0
+chromadb==0.5.23
+sentence-transformers==3.3.1
