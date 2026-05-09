@@ -174,6 +174,31 @@ def backtest_strategy(request: BacktestRequest):
         )
 
 
+
+@app.get("/price/{pair}")
+def get_pair_price(pair: str):
+    """
+    Fetch the current market price for a specific currency pair.
+
+    This endpoint calls the TradingView MCP tool (Twelve Data API) to get
+    the latest price. Returns a dict with price, pair, and status.
+    """
+    # Return the result from the tradingview instance directly to the caller
+    return tradingview.get_price(pair)
+
+
+@app.get("/signal/{pair}")
+def get_pair_signal(pair: str):
+    """
+    Fetch the current trading signal (BUY/SELL/NEUTRAL) for a currency pair.
+
+    This endpoint uses the TradingView MCP tool to analyze the 14-period RSI
+    and determine a signal. Returns a dict with signal, rsi, and status.
+    """
+    # Return the result from the tradingview instance directly to the caller
+    return tradingview.get_signal(pair)
+
+
 # ---------------------------------------------------------------------------
 # Run the app directly with Uvicorn when executing this file as a script:
 #   python app/main.py
