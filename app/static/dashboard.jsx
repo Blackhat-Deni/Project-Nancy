@@ -1,33 +1,4 @@
-import React, { useState, useEffect } from "react";
-
-// ─── Hardcoded placeholder OHLC candlestick data ─────────────────────────────
-const CANDLES = [
-  { t: "09:00", o: 1.0820, h: 1.0855, l: 1.0810, c: 1.0845 },
-  { t: "09:05", o: 1.0845, h: 1.0870, l: 1.0838, c: 1.0852 },
-  { t: "09:10", o: 1.0852, h: 1.0860, l: 1.0820, c: 1.0825 },
-  { t: "09:15", o: 1.0825, h: 1.0835, l: 1.0798, c: 1.0802 },
-  { t: "09:20", o: 1.0802, h: 1.0830, l: 1.0795, c: 1.0828 },
-  { t: "09:25", o: 1.0828, h: 1.0862, l: 1.0820, c: 1.0858 },
-  { t: "09:30", o: 1.0858, h: 1.0875, l: 1.0845, c: 1.0848 },
-  { t: "09:35", o: 1.0848, h: 1.0855, l: 1.0815, c: 1.0820 },
-  { t: "09:40", o: 1.0820, h: 1.0840, l: 1.0808, c: 1.0835 },
-  { t: "09:45", o: 1.0835, h: 1.0872, l: 1.0830, c: 1.0868 },
-  { t: "09:50", o: 1.0868, h: 1.0880, l: 1.0855, c: 1.0862 },
-  { t: "09:55", o: 1.0862, h: 1.0878, l: 1.0840, c: 1.0843 },
-  { t: "10:00", o: 1.0843, h: 1.0850, l: 1.0812, c: 1.0818 },
-  { t: "10:05", o: 1.0818, h: 1.0845, l: 1.0810, c: 1.0840 },
-  { t: "10:10", o: 1.0840, h: 1.0865, l: 1.0835, c: 1.0860 },
-];
-
-// ─── Hardcoded placeholder chat messages ──────────────────────────────────────
-const CHAT_MESSAGES = [
-  { from: "user",  text: "Nancy, what's the current signal on EURUSD?" },
-  { from: "nancy", text: "Signal is BULLISH. RSI at 58.4, MACD crossed positive. Watching 1.0875 resistance." },
-  { from: "user",  text: "What's the recommended position size?" },
-  { from: "nancy", text: "Based on 1% risk and current ATR, recommended size is 0.12 lots. Stop at 1.0812." },
-  { from: "user",  text: "Any news events to watch today?" },
-  { from: "nancy", text: "EUR CPI at 10:30 UTC. High impact. Suggest reducing exposure 5 minutes prior." },
-];
+import React, { useState, useEffect, useRef } from "react";
 
 // ─── Hardcoded placeholder log entries ───────────────────────────────────────
 const LOGS = [
@@ -46,97 +17,6 @@ const LOGS = [
 // ─── Colour & type token map for log levels ───────────────────────────────────
 const LOG_COLORS = { info: "#00e5ff", warning: "#ffdd57", error: "#ff3860" };
 const LOG_ICONS  = { info: "●", warning: "▲", error: "✖" };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SVG Candlestick Chart
-// ─────────────────────────────────────────────────────────────────────────────
-function CandlestickChart() {
-  const W = 820, H = 320;
-  const PAD = { top: 20, right: 20, bottom: 36, left: 58 };
-  const chartW = W - PAD.left - PAD.right;
-  const chartH = H - PAD.top - PAD.bottom;
-
-  // Calculate price range across all candles
-  const allPrices = CANDLES.flatMap(c => [c.h, c.l]);
-  const minP = Math.min(...allPrices);
-  const maxP = Math.max(...allPrices);
-  const priceRange = maxP - minP;
-  const padP = priceRange * 0.1;
-
-  // Map a price value to a Y pixel coordinate
-  const toY = p =>
-    PAD.top + chartH - ((p - (minP - padP)) / (priceRange + padP * 2)) * chartH;
-
-  // Map a candle index to an X pixel coordinate (centred)
-  const candleSlot = chartW / CANDLES.length;
-  const toX = i => PAD.left + i * candleSlot + candleSlot / 2;
-  const candleW = candleSlot * 0.55;
-
-  // Build horizontal price grid lines
-  const gridCount = 5;
-  const gridLines = Array.from({ length: gridCount + 1 }, (_, i) => {
-    const price = (minP - padP) + ((priceRange + padP * 2) / gridCount) * i;
-    return { y: toY(price), label: price.toFixed(4) };
-  });
-
-  return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
-      {/* Chart background */}
-      <rect x={PAD.left} y={PAD.top} width={chartW} height={chartH}
-        fill="#0a0e1a" rx="2" />
-
-      {/* Horizontal grid lines */}
-      {gridLines.map((g, i) => (
-        <g key={i}>
-          <line x1={PAD.left} y1={g.y} x2={PAD.left + chartW} y2={g.y}
-            stroke="#1e2a3a" strokeWidth="1" strokeDasharray="4,4" />
-          <text x={PAD.left - 6} y={g.y + 4} fill="#4a6080" fontSize="10"
-            fontFamily="'Courier New', monospace" textAnchor="end">
-            {g.label}
-          </text>
-        </g>
-      ))}
-
-      {/* Candle sticks */}
-      {CANDLES.map((c, i) => {
-        const x     = toX(i);
-        const isBull = c.c >= c.o;
-        const color  = isBull ? "#00e5a0" : "#ff3860";
-        const bodyTop = toY(Math.max(c.o, c.c));
-        const bodyBot = toY(Math.min(c.o, c.c));
-        const bodyH   = Math.max(bodyBot - bodyTop, 1);
-
-        return (
-          <g key={i}>
-            {/* High-low wick */}
-            <line x1={x} y1={toY(c.h)} x2={x} y2={toY(c.l)}
-              stroke={color} strokeWidth="1.5" />
-            {/* Body */}
-            <rect x={x - candleW / 2} y={bodyTop} width={candleW} height={bodyH}
-              fill={isBull ? color : "transparent"}
-              stroke={color} strokeWidth="1.5" />
-          </g>
-        );
-      })}
-
-      {/* X-axis time labels */}
-      {CANDLES.map((c, i) => (
-        i % 3 === 0 && (
-          <text key={i} x={toX(i)} y={H - 8} fill="#4a6080" fontSize="10"
-            fontFamily="'Courier New', monospace" textAnchor="middle">
-            {c.t}
-          </text>
-        )
-      ))}
-
-      {/* Axis border lines */}
-      <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + chartH}
-        stroke="#1e3050" strokeWidth="1" />
-      <line x1={PAD.left} y1={PAD.top + chartH} x2={PAD.left + chartW}
-        y2={PAD.top + chartH} stroke="#1e3050" strokeWidth="1" />
-    </svg>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top Navigation Bar
@@ -250,58 +130,24 @@ function ChartPanel() {
             fontFamily: "monospace", padding: "2px 6px",
             border: "1px solid #0d1f35", borderRadius: 2
           }}>
-            CANDLESTICK
+            TRADINGVIEW
           </span>
-        </div>
-        <div style={{ display: "flex", gap: 14 }}>
-          {["M1","M5","M15","H1","H4","D1"].map(tf => (
-            <span key={tf} style={{
-              fontSize: 10, color: tf === "M5" ? "#00e5ff" : "#2a4560",
-              fontFamily: "monospace", cursor: "pointer",
-              borderBottom: tf === "M5" ? "1px solid #00e5ff" : "none",
-              paddingBottom: 1,
-            }}>
-              {tf}
-            </span>
-          ))}
         </div>
       </div>
 
       {/* Chart area */}
       <div style={{
-        flex: 1, padding: "16px 12px 8px",
+        flex: 1, padding: 0,
         background: "#07091280",
         overflow: "hidden",
       }}>
-        <CandlestickChart />
-      </div>
-
-      {/* Stats row below chart */}
-      <div style={{
-        display: "flex", gap: 0,
-        borderTop: "1px solid #0d1f35",
-        background: "#060a12",
-      }}>
-        {[
-          { label: "OPEN",  value: "1.0840", color: "#e0f0ff" },
-          { label: "HIGH",  value: "1.0880", color: "#00e5a0" },
-          { label: "LOW",   value: "1.0795", color: "#ff3860" },
-          { label: "CLOSE", value: "1.0860", color: "#e0f0ff" },
-          { label: "VOL",   value: "24,812", color: "#00e5ff"  },
-          { label: "ATR",   value: "0.0042", color: "#ffdd57"  },
-        ].map((s, i) => (
-          <div key={i} style={{
-            flex: 1, padding: "8px 12px",
-            borderRight: i < 5 ? "1px solid #0d1f35" : "none",
-          }}>
-            <div style={{ fontSize: 9, color: "#2a4560", fontFamily: "monospace", letterSpacing: "0.1em" }}>
-              {s.label}
-            </div>
-            <div style={{ fontSize: 13, color: s.color, fontFamily: "monospace", fontWeight: 600, marginTop: 2 }}>
-              {s.value}
-            </div>
-          </div>
-        ))}
+        <iframe
+          src="https://www.tradingview.com/widgetembed/?symbol=FX:EURUSD&interval=5&theme=dark&style=1&locale=en&toolbar_bg=0a0f1c&hide_side_toolbar=0&allow_symbol_change=1"
+          width="100%"
+          height="100%"
+          frameBorder="0"
+          allowTransparency="true"
+        />
       </div>
     </div>
   );
@@ -311,6 +157,69 @@ function ChartPanel() {
 // Agent Chat Panel
 // ─────────────────────────────────────────────────────────────────────────────
 function ChatPanel() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, thinking]);
+
+  const handleSend = async () => {
+    if (!input.trim() || thinking) return;
+
+    const userMsg = input.trim();
+    setMessages(prev => [...prev, { from: "user", text: userMsg }]);
+    setInput("");
+    setThinking(true);
+
+    try {
+      const response = await fetch("http://localhost:8000/backtest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ strategy_code: userMsg }),
+      });
+
+      let nancyResponseText = "";
+      if (!response.ok) {
+        // Handle error by extracting detail if available
+        const errData = await response.json().catch(() => null);
+        nancyResponseText = "Error: " + (errData?.detail?.message || response.statusText || "Failed to communicate with Nancy.");
+      } else {
+        const data = await response.json();
+        // Format the backtest result into a readable message
+        nancyResponseText = "**" + data.strategy_name + "**\n\n" + data.summary + "\n\n**Verdict:** " + data.verdict + "\n\n**Reasoning:**\n" + data.reasoning;
+        if (data.entry_conditions?.length) {
+            nancyResponseText += "\n\n**Entries:**\n- " + data.entry_conditions.join('\n- ');
+        }
+        if (data.exit_conditions?.length) {
+            nancyResponseText += "\n\n**Exits:**\n- " + data.exit_conditions.join('\n- ');
+        }
+      }
+
+      setMessages(prev => [...prev, { from: "nancy", text: nancyResponseText }]);
+    } catch (error) {
+      console.error("Chat error:", error);
+      setMessages(prev => [...prev, { from: "nancy", text: "Error: Could not connect to the backend server." }]);
+    } finally {
+      setThinking(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
   return (
     <div style={{
       flex: 1, display: "flex", flexDirection: "column",
@@ -335,7 +244,7 @@ function ChatPanel() {
         display: "flex", flexDirection: "column", gap: 10,
         background: "#07091200",
       }}>
-        {CHAT_MESSAGES.map((msg, i) => {
+        {messages.map((msg, i) => {
           const isNancy = msg.from === "nancy";
           return (
             <div key={i} style={{
@@ -352,37 +261,91 @@ function ChatPanel() {
               <div style={{
                 maxWidth: "85%", padding: "8px 12px", borderRadius: 3,
                 background: isNancy ? "#0a1628" : "#091820",
-                border: `1px solid ${isNancy ? "#0d2a4a" : "#0d2a1f"}`,
+                border: "1px solid " + (isNancy ? "#0d2a4a" : "#0d2a1f"),
                 fontSize: 12,
                 color: isNancy ? "#a0d0f0" : "#80c0a0",
                 fontFamily: "monospace",
                 lineHeight: 1.55,
+                whiteSpace: "pre-wrap", // To respect newlines in Nancy's output
               }}>
                 {msg.text}
               </div>
             </div>
           );
         })}
+        
+        {/* Thinking Indicator */}
+        {thinking && (
+          <div style={{
+            display: "flex", flexDirection: "column",
+            alignItems: "flex-start",
+          }}>
+            <span style={{
+              fontSize: 9, color: "#2a4560",
+              fontFamily: "monospace", marginBottom: 3,
+              letterSpacing: "0.08em"
+            }}>
+              ◈ NANCY
+            </span>
+            <div style={{
+                maxWidth: "85%", padding: "8px 12px", borderRadius: 3,
+                background: "#0a1628", border: "1px solid #0d2a4a",
+                fontSize: 12, color: "#00e5ff", fontFamily: "monospace",
+                display: "flex", flexDirection: "column", gap: 6,
+                minWidth: "120px"
+              }}>
+                <div style={{
+                  height: "2px",
+                  width: "100%",
+                  background: "#00e5ff33",
+                  borderRadius: "1px",
+                  overflow: "hidden"
+                }}>
+                  <div style={{
+                    height: "100%",
+                    background: "#00e5ff",
+                    width: "50%",
+                    animation: "progressPulse 1.5s ease-in-out infinite alternate"
+                  }} />
+                </div>
+                <span>Nancy is thinking...</span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
 
-      {/* Input bar placeholder */}
+      {/* Input bar */}
       <div style={{
         padding: "10px 14px", borderTop: "1px solid #0d1f35",
         background: "#060a12", display: "flex", gap: 8, alignItems: "center"
       }}>
         <span style={{ color: "#00e5ff", fontFamily: "monospace", fontSize: 12 }}>›</span>
-        <div style={{
-          flex: 1, fontSize: 12, color: "#2a4560",
-          fontFamily: "monospace", letterSpacing: "0.04em"
-        }}>
-          Ask Nancy something...
-        </div>
-        <div style={{
-          fontSize: 9, color: "#1a3050", fontFamily: "monospace",
-          border: "1px solid #1a3050", padding: "2px 8px", borderRadius: 2
-        }}>
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={thinking}
+          placeholder="Ask Nancy something..."
+          style={{
+            flex: 1, fontSize: 12, color: "#e0f0ff",
+            background: "transparent", border: "none", outline: "none",
+            fontFamily: "monospace", letterSpacing: "0.04em"
+          }}
+        />
+        <button
+          onClick={handleSend}
+          disabled={thinking || !input.trim()}
+          style={{
+            fontSize: 9, color: thinking || !input.trim() ? "#1a3050" : "#00e5ff", 
+            fontFamily: "monospace", background: "transparent",
+            border: "1px solid " + (thinking || !input.trim() ? "#1a3050" : "#00e5ff"), 
+            padding: "2px 8px", borderRadius: 2, cursor: thinking || !input.trim() ? "not-allowed" : "pointer",
+            transition: "all 0.2s"
+          }}>
           ENTER
-        </div>
+        </button>
       </div>
     </div>
   );
@@ -427,7 +390,7 @@ function LogPanel() {
           <div key={i} style={{
             display: "flex", alignItems: "flex-start", gap: 8,
             padding: "5px 12px",
-            borderLeft: `2px solid ${LOG_COLORS[log.level]}22`,
+            borderLeft: "2px solid " + LOG_COLORS[log.level] + "22",
             marginBottom: 1,
             background: i % 2 === 0 ? "#07091208" : "transparent",
           }}>
@@ -444,7 +407,7 @@ function LogPanel() {
               color: LOG_COLORS[log.level], flexShrink: 0,
               fontSize: 9, letterSpacing: "0.1em", width: 52,
             }}>
-              [{log.level.toUpperCase().padEnd(7)}]
+              {"[" + log.level.toUpperCase().padEnd(7) + "]"}
             </span>
             {/* Message */}
             <span style={{ color: "#5a8090", lineHeight: 1.4 }}>
@@ -489,17 +452,14 @@ export default function App() {
   return (
     <>
       {/* Global style reset and body override */}
-      <style>{`
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #060a12; color: #e0f0ff; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: #060a12; }
-        ::-webkit-scrollbar-thumb { background: #1a3050; border-radius: 2px; }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
-      `}</style>
+      <style>{"* { box-sizing: border-box; margin: 0; padding: 0; } " +
+        "body { background: #060a12; color: #e0f0ff; } " +
+        "::-webkit-scrollbar { width: 4px; } " +
+        "::-webkit-scrollbar-track { background: #060a12; } " +
+        "::-webkit-scrollbar-thumb { background: #1a3050; border-radius: 2px; } " +
+        "@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } } " +
+        "@keyframes progressPulse { 0% { transform: translateX(-100%); opacity: 0.5; } 100% { transform: translateX(200%); opacity: 1; } }"
+      }</style>
 
       {/* Full-height app shell */}
       <div style={{
@@ -520,3 +480,6 @@ export default function App() {
     </>
   );
 }
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);

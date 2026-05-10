@@ -9,11 +9,9 @@
 from fastapi import FastAPI, HTTPException
 
 # JSONResponse lets us return custom status codes alongside JSON bodies
-from fastapi.responses import JSONResponse
-
-# Pydantic BaseModel is used to define the shape of request/response bodies.
-# FastAPI uses these models to validate incoming data and serialise outgoing data.
 from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 
 # Import the database engine and Base class so we can create tables on startup
 from app.database.db import engine, Base
@@ -28,6 +26,7 @@ from app.mcp.broker import BrokerMCP
 
 # Import the backtester's core analysis function
 from app.agent.backtester import analyze_strategy
+from app.mcp.tradingview_control import TradingViewControl
 
 # ---------------------------------------------------------------------------
 # Startup: create all database tables if they don't already exist.
@@ -42,6 +41,9 @@ Base.metadata.create_all(bind=engine)
 tradingview = TradingViewMCP()
 broker = BrokerMCP()
 
+# Initialize TradingView control instance
+tv_control = TradingViewControl()
+
 # ---------------------------------------------------------------------------
 # Create the FastAPI application instance
 # ---------------------------------------------------------------------------
@@ -50,6 +52,12 @@ app = FastAPI(
     version="0.1.0",
     description="An AI-powered Pinescript v6 backtesting agent",
 )
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+@app.get("/dashboard")
+def serve_dashboard():
+    return FileResponse("app/static/index.html")
 
 
 # ---------------------------------------------------------------------------
@@ -173,30 +181,20 @@ def backtest_strategy(request: BacktestRequest):
             }
         )
 
+@app.get("/tv/status")
+def tradingview_status():
+    # Check if TradingView desktop is connected via CDP
+    return tv_control.get_status()
 
+@app.get("/tv/quote/{symbol}")
+def tradingview_quote(symbol: str):
+    # Get live OHLCV quote directly from TradingView
+    return tv_control.get_quote(symbol)
 
-@app.get("/price/{pair}")
-def get_pair_price(pair: str):
-    """
-    Fetch the current market price for a specific currency pair.
-
-    This endpoint calls the TradingView MCP tool (Twelve Data API) to get
-    the latest price. Returns a dict with price, pair, and status.
-    """
-    # Return the result from the tradingview instance directly to the caller
-    return tradingview.get_price(pair)
-
-
-@app.get("/signal/{pair}")
-def get_pair_signal(pair: str):
-    """
-    Fetch the current trading signal (BUY/SELL/NEUTRAL) for a currency pair.
-
-    This endpoint uses the TradingView MCP tool to analyze the 14-period RSI
-    and determine a signal. Returns a dict with signal, rsi, and status.
-    """
-    # Return the result from the tradingview instance directly to the caller
-    return tradingview.get_signal(pair)
+@app.post("/tv/symbol/{symbol}")
+def tradingview_switch(symbol: str):
+    # Switch the active TradingView chart to the given symbol
+    return tv_control.switch_symbol(symbol)
 
 
 # ---------------------------------------------------------------------------

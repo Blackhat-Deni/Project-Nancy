@@ -7,3 +7,4 @@ docling==2.14.0
 chromadb==0.5.23
 sentence-transformers==3.3.1
 requests>=2.31.0
+aiofiles
