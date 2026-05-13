@@ -25,7 +25,7 @@ from app.mcp.tradingview import TradingViewMCP
 from app.mcp.broker import BrokerMCP
 
 # Import the backtester's core analysis function
-from app.agent.backtester import analyze_strategy
+from app.agent.backtester import process_chat
 from app.mcp.tradingview_control import TradingViewControl
 
 # ---------------------------------------------------------------------------
@@ -61,49 +61,29 @@ def serve_dashboard():
 
 
 # ---------------------------------------------------------------------------
-# Request / Response Pydantic models for the /backtest endpoint
+# Request / Response Pydantic models for the /chat endpoint
 # ---------------------------------------------------------------------------
 
-class BacktestRequest(BaseModel):
+class ChatRequest(BaseModel):
     """
-    The body of a POST /backtest request.
-
-    The caller sends the raw Pinescript v6 code they want Nancy to analyze.
-    FastAPI will automatically return a 422 Unprocessable Entity error if
-    this field is missing or not a string.
+    The body of a POST /chat request.
     """
-    # The full text of the Pinescript strategy to analyze
-    strategy_code: str
+    message: str
 
 
-class BacktestResponse(BaseModel):
+class ChatResponse(BaseModel):
     """
-    The shape of a successful POST /backtest response.
-
-    This mirrors the BacktestResult Pydantic model in backtester.py.
-    Declaring it here lets FastAPI generate accurate OpenAPI documentation
-    for the endpoint at /docs.
+    The shape of a successful POST /chat response.
     """
-    # The strategy name extracted from the strategy() call in the code
-    strategy_name: str
-
-    # A plain-English paragraph describing what the strategy does overall
-    summary: str
-
-    # A list of conditions that trigger a trade entry
-    entry_conditions: list
-
-    # A list of conditions that trigger a trade exit
-    exit_conditions: list
-
-    # A narrative assessment of the strategy's risk management
-    risk_assessment: str
-
-    # Binary verdict: "VIABLE" or "NOT_VIABLE"
-    verdict: str
-
-    # Detailed reasoning that supports the verdict
-    reasoning: str
+    type: str
+    chat_response: str | None = None
+    strategy_name: str | None = None
+    summary: str | None = None
+    entry_conditions: list | None = None
+    exit_conditions: list | None = None
+    risk_assessment: str | None = None
+    verdict: str | None = None
+    reasoning: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -125,30 +105,16 @@ def health_check():
     }
 
 
-@app.post("/backtest", response_model=BacktestResponse)
-def backtest_strategy(request: BacktestRequest):
+@app.post("/chat", response_model=ChatResponse)
+def chat_with_nancy(request: ChatRequest):
     """
-    Analyze a Pinescript v6 trading strategy using Nancy's AI agent.
-
-    Nancy will:
-    1. Retrieve relevant Pinescript documentation from ChromaDB (RAG)
-    2. Build a structured prompt combining that context + the strategy code
-    3. Run the prompt through the local Llama model
-    4. Parse and validate the JSON response
-    5. Return the structured analysis to the caller
-
-    Request body:
-        strategy_code (str): The full text of the Pinescript v6 strategy.
-
-    Returns:
-        BacktestResponse: A structured analysis including entry/exit
-        conditions, risk assessment, verdict, and reasoning.
+    Process user chat or strategy analysis.
     """
     try:
-        # Pass the strategy code to Nancy's core analysis function.
-        # analyze_strategy() returns either a validated dict on success
+        # Pass the message to Nancy's core processing function.
+        # process_chat() returns either a validated dict on success
         # or an error dict with an "error" key on failure.
-        result = analyze_strategy(request.strategy_code)
+        result = process_chat(request.message)
 
         # If the backtester returned an error dict, surface it as an HTTP 500
         # so the client knows something went wrong internally
@@ -190,6 +156,11 @@ def tradingview_status():
 def tradingview_quote(symbol: str):
     # Get live OHLCV quote directly from TradingView
     return tv_control.get_quote(symbol)
+
+@app.get("/tv/history/{symbol}")
+def tradingview_history(symbol: str, interval: str = "5min", outputsize: int = 200):
+    # Get historical candlestick data from Twelve Data via MCP
+    return tradingview.get_candles(symbol, interval=interval, outputsize=outputsize)
 
 @app.post("/tv/symbol/{symbol}")
 def tradingview_switch(symbol: str):

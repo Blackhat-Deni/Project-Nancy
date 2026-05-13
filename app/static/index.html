@@ -7,6 +7,7 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #060a12; color: #e0f0ff; overflow: hidden; height: 100vh; font-family: 'Courier New', monospace; }
@@ -121,6 +122,118 @@
     }
 
     function ChartPanel() {
+      const chartContainerRef = useRef(null);
+      const [chartError, setChartError] = useState(null);
+
+      useEffect(() => {
+        let chart;
+        let intervalId;
+        
+        try {
+          if (!window.LightweightCharts) {
+            throw new Error("LightweightCharts library failed to load from CDN.");
+          }
+
+          const handleResize = () => {
+            if (chartContainerRef.current && chart) {
+              chart.applyOptions({ 
+                width: chartContainerRef.current.clientWidth,
+                height: chartContainerRef.current.clientHeight 
+              });
+            }
+          };
+
+          chart = LightweightCharts.createChart(chartContainerRef.current, {
+            width: chartContainerRef.current.clientWidth || 600,
+            height: chartContainerRef.current.clientHeight || 400,
+            layout: {
+              background: { type: 'solid', color: '#070912' },
+              textColor: '#4a7090',
+            },
+            grid: {
+              vertLines: { color: '#0d1f35' },
+              horzLines: { color: '#0d1f35' },
+            },
+            crosshair: {
+              mode: 0,
+            },
+            rightPriceScale: {
+              borderColor: '#0d1f35',
+            },
+            timeScale: {
+              borderColor: '#0d1f35',
+              timeVisible: true,
+              secondsVisible: false,
+            },
+          });
+
+          const candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+            upColor: '#00e5a0',
+            downColor: '#ff3860',
+            borderDownColor: '#ff3860',
+            borderUpColor: '#00e5a0',
+            wickDownColor: '#ff3860',
+            wickUpColor: '#00e5a0',
+          });
+
+          fetch('/tv/history/EURUSD?interval=5min&outputsize=200')
+            .then(res => res.json())
+            .then(data => {
+              if (data && Array.isArray(data)) {
+                const formattedData = data.slice().reverse().map(item => {
+                  let timeVal;
+                  try {
+                     timeVal = Math.floor(new Date(item.datetime.replace(' ', 'T') + "Z").getTime() / 1000);
+                  } catch(e) { timeVal = null; }
+                  return {
+                    time: timeVal,
+                    open: item.open,
+                    high: item.high,
+                    low: item.low,
+                    close: item.close,
+                  };
+                }).filter(i => i.time);
+                if (formattedData.length > 0) {
+                  candlestickSeries.setData(formattedData);
+                }
+              } else if (data && data.detail) {
+                 console.error("Backend Error:", data.detail);
+              }
+            })
+            .catch(err => console.error("Error fetching historical data:", err));
+
+          window.addEventListener('resize', handleResize);
+
+          intervalId = setInterval(() => {
+            fetch('/tv/history/EURUSD?interval=5min&outputsize=2')
+              .then(res => res.json())
+              .then(data => {
+                if (data && data.length > 0) {
+                  const item = data[0]; 
+                  const unixTime = Math.floor(new Date(item.datetime.replace(' ', 'T') + "Z").getTime() / 1000);
+                  candlestickSeries.update({
+                    time: unixTime,
+                    open: item.open,
+                    high: item.high,
+                    low: item.low,
+                    close: item.close,
+                  });
+                }
+              })
+              .catch(console.error);
+          }, 10000);
+
+          return () => {
+            window.removeEventListener('resize', handleResize);
+            clearInterval(intervalId);
+            chart.remove();
+          };
+        } catch (err) {
+          console.error("ChartPanel Error:", err);
+          setChartError(err.toString());
+        }
+      }, []);
+
       return (
         <div style={{
           flex: "0 0 70%", display: "flex", flexDirection: "column",
@@ -130,6 +243,7 @@
             padding: "10px 18px", borderBottom: "1px solid #0d1f35",
             display: "flex", alignItems: "center", justifyContent: "space-between",
             background: "#080c18",
+            zIndex: 10,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{
@@ -143,23 +257,28 @@
                 fontFamily: "monospace", padding: "2px 6px",
                 border: "1px solid #0d1f35", borderRadius: 2
               }}>
-                TRADINGVIEW
+                NANCY CHART
               </span>
             </div>
           </div>
-          <div style={{
-            flex: 1, padding: 0,
-            background: "#07091280",
-            overflow: "hidden",
-          }}>
-            <iframe
-              src="https://www.tradingview.com/widgetembed/?symbol=FX:EURUSD&interval=5&theme=dark&style=1&locale=en&toolbar_bg=0a0f1c&hide_side_toolbar=0&allow_symbol_change=1"
-              width="100%"
-              height="100%"
-              frameBorder="0"
-              allowTransparency="true"
+          
+          {chartError ? (
+            <div style={{ padding: "20px", color: "#ff3860", fontFamily: "monospace", flex: 1 }}>
+              <h3>Chart Error</h3>
+              <pre>{chartError}</pre>
+            </div>
+          ) : (
+            <div 
+              ref={chartContainerRef}
+              style={{
+                flex: 1, padding: 0,
+                background: "#070912",
+                overflow: "hidden",
+                position: "relative",
+                minHeight: "300px"
+              }}
             />
-          </div>
+          )}
         </div>
       );
     }
@@ -187,12 +306,12 @@
         setThinking(true);
 
         try {
-          const response = await fetch("http://localhost:8000/backtest", {
+          const response = await fetch("http://localhost:8000/chat", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ strategy_code: userMsg }),
+            body: JSON.stringify({ message: userMsg }),
           });
 
           let nancyResponseText = "";
@@ -201,12 +320,16 @@
             nancyResponseText = "Error: " + (errData?.detail?.message || response.statusText || "Failed to communicate with Nancy.");
           } else {
             const data = await response.json();
-            nancyResponseText = "**" + data.strategy_name + "**\n\n" + data.summary + "\n\n**Verdict:** " + data.verdict + "\n\n**Reasoning:**\n" + data.reasoning;
-            if (data.entry_conditions?.length) {
-                nancyResponseText += "\n\n**Entries:**\n- " + data.entry_conditions.join('\n- ');
-            }
-            if (data.exit_conditions?.length) {
-                nancyResponseText += "\n\n**Exits:**\n- " + data.exit_conditions.join('\n- ');
+            if (data.type === "chat") {
+              nancyResponseText = data.chat_response;
+            } else {
+              nancyResponseText = "**" + (data.strategy_name || "Strategy Analysis") + "**\n\n" + data.summary + "\n\n**Verdict:** " + data.verdict + "\n\n**Reasoning:**\n" + data.reasoning;
+              if (data.entry_conditions?.length) {
+                  nancyResponseText += "\n\n**Entries:**\n- " + data.entry_conditions.join('\n- ');
+              }
+              if (data.exit_conditions?.length) {
+                  nancyResponseText += "\n\n**Exits:**\n- " + data.exit_conditions.join('\n- ');
+              }
             }
           }
 

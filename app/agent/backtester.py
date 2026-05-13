@@ -60,35 +60,37 @@ _model_instance: Llama | None = None
 # Pydantic model – defines the exact JSON schema Nancy must return.
 # ---------------------------------------------------------------------------
 
-class BacktestResult(BaseModel):
+class AgentResponse(BaseModel):
     """
     Validates the structured JSON output produced by Nancy.
 
-    Every field is required – if the model omits any of them, Pydantic
-    will raise a ValidationError, which we catch and turn into an error
-    dictionary so the caller always gets a predictable response shape.
+    The response can either be a general chat message or a structured strategy analysis.
     """
 
+    type: str
+
+    chat_response: str | None = None
+
     # The name of the strategy as understood by the model
-    strategy_name: str
+    strategy_name: str | None = None
 
     # A plain-English paragraph describing what the strategy does overall
-    summary: str
+    summary: str | None = None
 
     # A list of conditions that trigger a trade entry (e.g. "RSI < 30")
-    entry_conditions: list[str]
+    entry_conditions: list[str] | None = None
 
     # A list of conditions that trigger a trade exit (e.g. "RSI > 70")
-    exit_conditions: list[str]
+    exit_conditions: list[str] | None = None
 
     # A narrative assessment of the strategy's risk profile
-    risk_assessment: str
+    risk_assessment: str | None = None
 
     # Binary verdict – must be exactly "VIABLE" or "NOT_VIABLE"
-    verdict: str
+    verdict: str | None = None
 
     # Detailed step-by-step reasoning that supports the verdict
-    reasoning: str
+    reasoning: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -96,31 +98,53 @@ class BacktestResult(BaseModel):
 # analysis.  It defines her identity, thinking process, and output format.
 # ---------------------------------------------------------------------------
 
-BACKTESTER_SYSTEM_PROMPT = """You are Nancy, an expert Pinescript v6 backtesting agent.
+def get_system_prompt() -> str:
+    arch_path = PROJECT_ROOT / "ARCHITECTURE.md"
+    arch_content = "Architecture documentation not found."
+    if arch_path.exists():
+        with open(arch_path, "r", encoding="utf-8") as f:
+            arch_content = f.read().strip()
 
-Your sole purpose is to analyze trading strategies written in Pinescript v6 and produce a clear, structured evaluation. You do not execute trades. You do not give financial advice. You only analyze code.
+    return f"""You are Nancy, an expert trading assistant and Pinescript v6 backtesting agent.
 
-## How You Think (follow this order every time)
+Your goal is to converse with the user and help them with trading concepts, or analyze Pinescript v6 strategies when explicitly asked. You do not execute trades. You do not give financial advice.
 
-1. **Understand the strategy logic** – Read the entire script carefully. Identify what indicators or calculations are used and what they measure.
-2. **Evaluate entry conditions** – Identify every condition that causes the strategy to open a position. Think about when in the market cycle these would trigger.
-3. **Evaluate exit conditions** – Identify every condition that causes the strategy to close a position. Consider whether exits are well-defined or open-ended.
-4. **Assess risk management** – Look for stop-losses, position sizing, drawdown limits, or any other risk controls. If none are present, say so explicitly.
-5. **Form a verdict** – Based on the above, decide if the strategy is VIABLE (logically sound and testable) or NOT_VIABLE (has logical errors, missing conditions, or is too incomplete to test).
+## Your Identity & Architecture
+You are an AI agent part of "Project Nancy". Below are the details of your internal technical architecture. You must use this exact information to natively answer any questions the user asks about how you work, what databases you use, or your technical stack. Do NOT tell the user to read a document or refer to a section; summarize the answer yourself naturally using the details below:
+
+{arch_content}
+
+## How You Think
+
+1. Read the user's message carefully.
+2. If the user asks about your architecture, stack, or how you work, answer their question conversationally using the details from "Your Identity & Architecture" above. Do not refer them to a document.
+3. If it is a general chat or a trading question (e.g. "hi", "how are you", "what is rsi?"), respond normally as a helpful AI assistant.
+4. If the user explicitly provides Pinescript code or asks you to analyze a strategy, perform your backtesting analysis step-by-step:
+   - Understand the strategy logic.
+   - Evaluate entry conditions.
+   - Evaluate exit conditions.
+   - Assess risk management.
+   - Form a verdict (VIABLE or NOT_VIABLE).
 
 ## Rules You Must Follow
 
-- Always think step by step in the order above.
-- Never guess. If something is unclear or missing from the code, say so in the `reasoning` field.
+- Never guess. If something is unclear, say so.
 - Never hallucinate Pinescript functions or behaviors — use only what is shown in the code and the provided reference context.
 - Never execute or simulate trades — analysis only.
-- If the input is not valid Pinescript, set verdict to NOT_VIABLE and explain why in reasoning.
 
 ## Output Format
 
-You must ALWAYS respond with this exact JSON structure and nothing else — no preamble, no explanation outside the JSON:
+You must ALWAYS respond with exactly ONE of the following JSON structures and nothing else — no preamble, no markdown formatting outside the JSON block.
 
-{
+If it is a general chat or question:
+{{
+  "type": "chat",
+  "chat_response": "Your conversational response here."
+}}
+
+If it is a strategy analysis:
+{{
+  "type": "analysis",
   "strategy_name": "the name from the strategy() call, or 'Unnamed Strategy' if not found",
   "summary": "a plain English paragraph describing what the strategy does",
   "entry_conditions": ["condition 1", "condition 2"],
@@ -128,7 +152,7 @@ You must ALWAYS respond with this exact JSON structure and nothing else — no p
   "risk_assessment": "a paragraph assessing the risk management of this strategy",
   "verdict": "VIABLE or NOT_VIABLE",
   "reasoning": "a detailed explanation of your verdict, referencing specific parts of the code"
-}"""
+}}"""
 
 
 def load_backtester() -> Llama:
@@ -175,10 +199,10 @@ def load_backtester() -> Llama:
     return _model_instance
 
 
-def analyze_strategy(strategy_code: str) -> dict:
+def process_chat(message: str) -> dict:
     """
-    The main analysis function.  Takes raw Pinescript code and returns a
-    validated dictionary describing the strategy.
+    The main analysis function.  Takes a user message (chat or code) and returns a
+    validated dictionary describing the response.
 
     Pipeline:
     1. Retrieve relevant Pinescript v6 documentation from ChromaDB using
@@ -190,8 +214,8 @@ def analyze_strategy(strategy_code: str) -> dict:
 
     Parameters
     ----------
-    strategy_code : str
-        The full text of a Pinescript v6 strategy.
+    message : str
+        The user's message or Pinescript strategy code.
 
     Returns
     -------
@@ -205,7 +229,7 @@ def analyze_strategy(strategy_code: str) -> dict:
     # ------------------------------------------------------------------
     print("[INFO] Retrieving relevant Pinescript context from ChromaDB...")
     try:
-        rag_results = retrieve(query=strategy_code, top_k=5)
+        rag_results = retrieve(query=message, top_k=5)
         context_block = format_context(rag_results)
     except Exception as e:
         print(f"[WARNING] RAG retrieval failed: {e}. Continuing without context.")
@@ -224,7 +248,7 @@ def analyze_strategy(strategy_code: str) -> dict:
         messages=[
             {
                 "role": "system",
-                "content": BACKTESTER_SYSTEM_PROMPT
+                "content": get_system_prompt()
             },
             {
                 "role": "user",
@@ -232,10 +256,10 @@ def analyze_strategy(strategy_code: str) -> dict:
 The following documentation was retrieved from the knowledge base:
 {context_block}
 
-## Strategy Code to Analyze
-Analyze this Pinescript v6 strategy and respond with ONLY a JSON object:
-````pinescript
-{strategy_code}
+## User Message / Strategy Code
+Analyze this user message or strategy code and respond with ONLY a JSON object:
+```text
+{message}
 ```"""
             }
         ],
@@ -256,7 +280,7 @@ Analyze this Pinescript v6 strategy and respond with ONLY a JSON object:
 
         # Then validate it against our Pydantic schema – this ensures all
         # required fields are present and have the right types
-        result = BacktestResult(**parsed_json)
+        result = AgentResponse(**parsed_json)
 
         # Return the validated result as a plain dict for easy serialisation
         return result.model_dump()
@@ -308,7 +332,7 @@ if rsiValue > 70
     print("=" * 60 + "\n")
 
     # Run the full analysis pipeline
-    result = analyze_strategy(test_strategy)
+    result = process_chat(test_strategy)
 
     # Pretty-print the result dictionary as formatted JSON
     print("\n[RESULT]")
