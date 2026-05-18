@@ -11,6 +11,7 @@ Nancy never guesses – if she cannot understand something, she says so.
 """
 
 import json
+from app.logger import system_logger
 import os
 import pathlib
 
@@ -39,6 +40,7 @@ from pydantic import BaseModel, ValidationError
 # relevant Pinescript documentation before sending the prompt.
 # ---------------------------------------------------------------------------
 from app.rag.retriever import retrieve, format_context
+from app.agent import memory
 
 # ---------------------------------------------------------------------------
 # Load environment variables from the .env file at project root
@@ -60,37 +62,41 @@ _model_instance: Llama | None = None
 # Pydantic model – defines the exact JSON schema Nancy must return.
 # ---------------------------------------------------------------------------
 
+class BacktestStrategy(BaseModel):
+    """Structured strategy definition for backtest execution."""
+    name: str = "Unnamed Strategy"
+    indicators: list[str] = []
+    entry_rules: dict = {}    # {"long": [...], "short": [...]}
+    exit_rules: list[str] = []
+    risk_rules: list[str] = []
+
+
 class AgentResponse(BaseModel):
     """
     Validates the structured JSON output produced by Nancy.
 
-    The response can either be a general chat message or a structured strategy analysis.
+    The response can be a chat message, a strategy analysis, or a backtest request.
     """
 
-    type: str
+    type: str  # 'chat', 'analysis', or 'backtest_request'
 
     chat_response: str | None = None
 
-    # The name of the strategy as understood by the model
+    # Strategy analysis fields
     strategy_name: str | None = None
-
-    # A plain-English paragraph describing what the strategy does overall
     summary: str | None = None
-
-    # A list of conditions that trigger a trade entry (e.g. "RSI < 30")
     entry_conditions: list[str] | None = None
-
-    # A list of conditions that trigger a trade exit (e.g. "RSI > 70")
     exit_conditions: list[str] | None = None
-
-    # A narrative assessment of the strategy's risk profile
     risk_assessment: str | None = None
-
-    # Binary verdict – must be exactly "VIABLE" or "NOT_VIABLE"
     verdict: str | None = None
-
-    # Detailed step-by-step reasoning that supports the verdict
     reasoning: str | None = None
+
+    # Backtest request fields
+    symbol: str | None = None
+    timeframe: str | None = None
+    start_date: str | None = None
+    max_bars: int | None = None
+    strategy: BacktestStrategy | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +158,36 @@ If it is a strategy analysis:
   "risk_assessment": "a paragraph assessing the risk management of this strategy",
   "verdict": "VIABLE or NOT_VIABLE",
   "reasoning": "a detailed explanation of your verdict, referencing specific parts of the code"
-}}"""
+}}
+
+If the user asks to BACKTEST a strategy (e.g. "backtest RSI crossover on EURUSD from January", "run EMA strategy on BTCUSDT 1h"), parse their request into this structure:
+{{
+  "type": "backtest_request",
+  "symbol": "EURUSD",
+  "timeframe": "5",
+  "start_date": "2024-01-01",
+  "max_bars": 200,
+  "strategy": {{
+    "name": "EMA Crossover 8/21",
+    "indicators": ["ema_8", "ema_21"],
+    "entry_rules": {{
+      "long": ["Price is above EMA(8)", "EMA(8) crosses above EMA(21)"],
+      "short": ["Price is below EMA(8)", "EMA(8) crosses below EMA(21)"]
+    }},
+    "exit_rules": ["Reverse cross of EMA(8) and EMA(21)", "Stop loss at 1% from entry"],
+    "risk_rules": ["Risk maximum 1% of portfolio per trade"]
+  }}
+}}
+
+IMPORTANT for backtest_request:
+- Extract the symbol from the user's message. Default to "EURUSD" if not specified.
+- Extract timeframe as a number in minutes ("1", "5", "15", "60"). Default to "5" if not specified.
+- Extract start_date in YYYY-MM-DD format. Default to "2024-01-01" if not specified.
+- Parse their described strategy into clear entry_rules (long/short), exit_rules, and the list of indicators needed.
+- max_bars defaults to 200 unless the user specifies a duration.
+- If the user previously gave you Pinescript code and now asks to "backtest it" or "run it on the chart", you MUST extract the strategy rules FROM that Pinescript code. Look at the entry conditions, exit conditions, indicators used, and risk management rules in the code, and translate them into the backtest_request JSON format.
+- Keywords that indicate a backtest request: "backtest", "run it", "test it on the chart", "run this strategy", "simulate", "replay", "try it", "execute it", "on the lightgraph", "on the chart".
+- When the user says things like "backtest this" or "run it on the chart" after providing strategy code, ALWAYS respond with a backtest_request, NOT an analysis or chat response."""
 
 
 def load_backtester() -> Llama:
@@ -183,8 +218,8 @@ def load_backtester() -> Llama:
     # Resolve the model path relative to the project root
     model_path = str(PROJECT_ROOT / model_path_rel)
 
-    print(f"[INFO] Loading Llama model from: {model_path}")
-    print(f"[INFO] Context size: {context_size} | GPU layers: {gpu_layers}")
+    system_logger.system("LLM", f"Loading Llama model from: {model_path}")
+    system_logger.system("LLM", f"Context size: {context_size} | GPU layers: {gpu_layers}")
 
     # Load the GGUF model via llama-cpp-python
     # verbose=False suppresses the low-level C++ logs for cleaner output
@@ -195,8 +230,16 @@ def load_backtester() -> Llama:
         verbose=False,
     )
 
-    print("[INFO] Llama model loaded successfully.")
+    system_logger.system("LLM", "Llama model loaded and ready.")
     return _model_instance
+
+
+# ---------------------------------------------------------------------------
+# Conversation history — allows Nancy to remember previous messages
+# ---------------------------------------------------------------------------
+_conversation_history: list[dict] = []
+MAX_HISTORY_MESSAGES = 10  # Compact rolling chat memory; runtime artifacts live in memory.py
+MAX_HISTORY = MAX_HISTORY_MESSAGES
 
 
 def process_chat(message: str) -> dict:
@@ -208,7 +251,8 @@ def process_chat(message: str) -> dict:
     1. Retrieve relevant Pinescript v6 documentation from ChromaDB using
        the strategy code as the search query (RAG lookup).
     2. Format the retrieved chunks into a clean context block.
-    3. Load the model and run inference using chat completion format.
+    3. Load the model and run inference using chat completion format
+       WITH conversation history so Nancy remembers previous messages.
     4. Parse and validate the JSON response with Pydantic.
     5. Return the result as a plain Python dictionary.
 
@@ -223,16 +267,21 @@ def process_chat(message: str) -> dict:
         A validated BacktestResult as a dict on success, or an error
         dict with an "error" key if something went wrong.
     """
+    global _conversation_history
 
     # ------------------------------------------------------------------
     # Step 1: RAG lookup – find relevant Pinescript reference material
     # ------------------------------------------------------------------
-    print("[INFO] Retrieving relevant Pinescript context from ChromaDB...")
+    system_logger.info("Agent", f"Message received — routing to RAG pipeline...")
+    system_logger.info("RAG", "Querying ChromaDB for relevant Pinescript context...")
     try:
-        rag_results = retrieve(query=message, top_k=5)
+        rag_results = retrieve(query=message, top_k=2)
         context_block = format_context(rag_results)
+        # Safety limit: truncate RAG context to ~1000 characters so it doesn't overflow
+        if len(context_block) > 1000:
+            context_block = context_block[:1000] + "... [context truncated]"
     except Exception as e:
-        print(f"[WARNING] RAG retrieval failed: {e}. Continuing without context.")
+        system_logger.warning("RAG", f"Retrieval failed: {e}. Continuing without context.")
         context_block = "[No Pinescript reference context available.]"
 
     # ------------------------------------------------------------------
@@ -241,18 +290,29 @@ def process_chat(message: str) -> dict:
     # This uses the correct message format that Llama 3.1 was trained on.
     # We pass the system prompt separately from the user instructions,
     # which helps the model stay in character and follow constraints.
+    # We also include conversation history so Nancy can remember
+    # previously provided strategy code.
+    system_logger.info("Agent", "RAG context injected into prompt — dispatching to LLM...")
     model = load_backtester()
 
-    print("[INFO] Sending prompt to Llama model for analysis...")
-    response = model.create_chat_completion(
-        messages=[
-            {
-                "role": "system",
-                "content": get_system_prompt()
-            },
-            {
-                "role": "user",
-                "content": f"""## Pinescript v6 Reference Context
+    # Build the messages array with conversation history
+    messages = [
+        {
+            "role": "system",
+            "content": get_system_prompt()
+        }
+    ]
+
+    # Add conversation history (last N exchanges)
+    for hist in _conversation_history[-MAX_HISTORY:]:
+        messages.append(hist)
+
+    # Add the current user message with RAG context and runtime chart/backtest memory.
+    runtime_context = memory.build_runtime_context()
+    current_user_msg = f"""## Current Nancy Runtime Context
+{runtime_context}
+
+## Pinescript v6 Reference Context
 The following documentation was retrieved from the knowledge base:
 {context_block}
 
@@ -261,15 +321,29 @@ Analyze this user message or strategy code and respond with ONLY a JSON object:
 ```text
 {message}
 ```"""
-            }
-        ],
-        max_tokens=1024,
-        temperature=0.1,
-    )
+    messages.append({"role": "user", "content": current_user_msg})
+
+    total_chars = sum(len(m["content"]) for m in messages)
+    system_logger.info("LLM", f"Prompt details: {len(messages)} messages, total {total_chars} chars.")
+    for idx, m in enumerate(messages):
+        system_logger.info("LLM", f"Msg {idx} ({m['role']}): {len(m['content'])} chars")
+
+    system_logger.info("LLM", f"Prompt received — {len(messages)} messages in context (incl. {len(_conversation_history)} history)")
+    try:
+        response = model.create_chat_completion(
+            messages=messages,
+            max_tokens=384,
+            temperature=0.1,
+        )
+    except Exception as e:
+        system_logger.error("LLM", f"LLM error: {e}")
+        # To avoid breaking the app immediately, we can return a fallback
+        raise e
 
     # Extract the text response from the chat completion result structure
     raw_output = response["choices"][0]["message"]["content"].strip()
-    print(f"[INFO] Raw model output:\n{raw_output}")
+    system_logger.info("LLM", f"Inference complete — {len(raw_output)} chars returned.")
+    system_logger.info("Agent", "Parsing and validating model output...")
 
     # ------------------------------------------------------------------
     # Step 4: Parse and validate the JSON response
@@ -283,10 +357,25 @@ Analyze this user message or strategy code and respond with ONLY a JSON object:
         result = AgentResponse(**parsed_json)
 
         # Return the validated result as a plain dict for easy serialisation
+        resp_type = parsed_json.get("type", "unknown")
+        system_logger.info("Agent", f"Response validated — type: {resp_type.upper()}. Sending to client.")
+
+        # Save to conversation history so Nancy remembers this exchange
+        # Store a condensed version of the user message (skip RAG context)
+        hist_msg = message
+        if len(hist_msg) > 500:
+            hist_msg = "[Pine Script omitted from history to save context tokens] " + hist_msg[-100:]
+            
+        _conversation_history.append({"role": "user", "content": hist_msg})
+        _conversation_history.append({"role": "assistant", "content": raw_output})
+        # Trim history if it gets too long
+        while len(_conversation_history) > MAX_HISTORY_MESSAGES:
+            _conversation_history.pop(0)
+
         return result.model_dump()
 
     except json.JSONDecodeError as e:
-        # The model produced text that isn't valid JSON at all
+        system_logger.error("Agent", f"JSON parse failed — model did not return valid JSON: {e}")
         return {
             "error": "JSON_DECODE_ERROR",
             "message": f"Model output was not valid JSON: {e}",
@@ -294,8 +383,7 @@ Analyze this user message or strategy code and respond with ONLY a JSON object:
         }
 
     except ValidationError as e:
-        # The model produced valid JSON but it didn't match our schema
-        # (e.g. a required field was missing or had the wrong type)
+        system_logger.error("Agent", f"Schema validation failed — missing or wrong fields: {e}")
         return {
             "error": "VALIDATION_ERROR",
             "message": f"Model output did not match expected schema: {e}",
@@ -303,11 +391,110 @@ Analyze this user message or strategy code and respond with ONLY a JSON object:
         }
 
     except Exception as e:
-        # Catch-all for any other unexpected error
+        system_logger.error("Agent", f"Unexpected error: {e}")
         return {
             "error": "UNKNOWN_ERROR",
             "message": str(e),
             "raw_output": raw_output if "raw_output" in locals() else "",
+        }
+
+def _extract_backtest_from_pine(pine_code: str, user_message: str) -> dict:
+    """
+    Extracts backtest configuration directly from Pine Script code using a lightweight LLM call.
+    Bypasses RAG and history to save context tokens.
+    """
+    system_logger.info("Agent", "Extracting backtest config from Pine Script code directly...")
+    model = load_backtester()
+    
+    from datetime import datetime
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    
+    prompt = f"""
+    You are an AI trading assistant. Today's date is {today_str}.
+    Analyze the following Pine Script strategy and the user's request.
+    Extract the entry rules, exit rules, indicators, and risk management parameters.
+    Also extract the symbol, timeframe (in minutes, default "5"), start_date (YYYY-MM-DD, default "2024-01-01"), and max_bars (default 200).
+    If the user asks for N days of data, calculate the start_date by subtracting N days from {today_str}.
+    
+    User request: {user_message}
+    
+    Pine Script:
+    ```
+    {pine_code}
+    ```
+    
+    Respond ONLY with a JSON object in the following format:
+    {{
+        "type": "backtest_request",
+        "symbol": "EURUSD",
+        "timeframe": "5",
+        "start_date": "2024-01-01",
+        "max_bars": 200,
+        "strategy": {{
+            "name": "Strategy Name",
+            "indicators": ["EMA 20", "RSI 14"],
+            "entry_rules": {{"long": ["Buy when close crosses over EMA 20"], "short": []}},
+            "exit_rules": ["Sell when close crosses under EMA 20"],
+            "risk_rules": ["Stop loss 1%"]
+        }}
+    }}
+    """
+    
+    response = model.create_chat_completion(
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=384,
+        temperature=0.1,
+    )
+    
+    raw_output = response["choices"][0]["message"]["content"].strip()
+    
+    # Remove any markdown code blocks if the LLM adds them
+    if raw_output.startswith("```json"):
+        raw_output = raw_output[7:]
+    if raw_output.startswith("```"):
+        raw_output = raw_output[3:]
+    if raw_output.endswith("```"):
+        raw_output = raw_output[:-3]
+    raw_output = raw_output.strip()
+    
+    try:
+        parsed = json.loads(raw_output)
+        parsed["type"] = "backtest_request"
+        
+        # Ensure default fields are present
+        parsed.setdefault("symbol", "EURUSD")
+        parsed.setdefault("timeframe", "5")
+        parsed.setdefault("start_date", "2024-01-01")
+        parsed.setdefault("max_bars", 200)
+        
+        # Ensure strategy fields
+        if "strategy" not in parsed:
+            parsed["strategy"] = {}
+        strategy = parsed["strategy"]
+        strategy.setdefault("name", "Extracted Strategy")
+        strategy.setdefault("indicators", [])
+        if isinstance(strategy.get("entry_rules"), list):
+            strategy["entry_rules"] = {"long": strategy.get("entry_rules", []), "short": []}
+        strategy.setdefault("entry_rules", {"long": [], "short": []})
+        strategy.setdefault("exit_rules", [])
+        strategy.setdefault("risk_rules", [])
+        
+        return parsed
+    except Exception as e:
+        system_logger.error("Agent", f"Failed to parse extraction output: {e} | Raw Output: {raw_output}")
+        return {
+            "type": "backtest_request",
+            "symbol": "EURUSD",
+            "timeframe": "5",
+            "start_date": "2024-01-01",
+            "max_bars": 200,
+            "strategy": {
+                "name": "Fallback Strategy",
+                "indicators": [],
+                "entry_rules": {"long": ["Follow Pinescript Logic"], "short": []},
+                "exit_rules": [],
+                "risk_rules": []
+            }
         }
 
 

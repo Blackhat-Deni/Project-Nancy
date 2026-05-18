@@ -10,6 +10,8 @@ prompt as context.
 
 import pathlib
 
+from app.logger import system_logger
+
 # ---------------------------------------------------------------------------
 # SentenceTransformer – we use the same model that was used during ingestion
 # so that query embeddings live in the same vector space as the stored
@@ -51,17 +53,12 @@ def get_retriever():
     # Connect to the persisted ChromaDB database on disk
     # This is the same database that ingestion.py writes to
     client = chromadb.PersistentClient(path=str(CHROMADB_DIR))
-
-    # Open the nancy_strategies collection (it must already exist from
-    # a previous ingestion run – if it doesn't, this will raise an error)
     collection = client.get_collection(name="nancy_strategies")
-    print(f"[INFO] Connected to ChromaDB collection 'nancy_strategies' ({collection.count()} chunks)")
+    system_logger.system("ChromaDB", f"Connected to 'nancy_strategies' ({collection.count()} chunks)")
 
-    # Load the same embedding model used during ingestion so that query
-    # vectors are directly comparable to document vectors
-    print(f"[INFO] Loading embedding model: {EMBEDDING_MODEL_NAME}")
+    system_logger.system("RAG", f"Loading embedding model: {EMBEDDING_MODEL_NAME}")
     model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    print("[INFO] Embedding model loaded successfully.")
+    system_logger.system("RAG", "Embedding model ready.")
 
     return collection, model
 
@@ -97,13 +94,13 @@ def retrieve(query: str, top_k: int = 5) -> list[dict]:
     # This produces a 384-dimensional float vector that captures the
     # meaning of the query, just like we did for document chunks during
     # ingestion.
-    print(f"[INFO] Encoding query: \"{query}\"")
+    system_logger.info("RAG", f"Encoding query into embedding vector...")
     query_embedding = model.encode([query]).tolist()
 
     # Step 3: Ask ChromaDB to find the closest chunk embeddings
     # ChromaDB uses cosine distance by default – lower distance means
     # the chunk's meaning is closer to the query's meaning.
-    print(f"[INFO] Searching for top {top_k} relevant chunks...")
+    system_logger.info("ChromaDB", f"Searching vector space for top {top_k} relevant chunks...")
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=top_k,
@@ -125,7 +122,7 @@ def retrieve(query: str, top_k: int = 5) -> list[dict]:
             "score": round(dist, 4),
         })
 
-    print(f"[INFO] Found {len(output)} results.")
+    system_logger.info("RAG", f"Retrieved {len(output)} relevant chunk(s) from ChromaDB.")
     return output
 
 

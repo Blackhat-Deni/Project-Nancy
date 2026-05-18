@@ -14,38 +14,41 @@
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: #060a12; }
     ::-webkit-scrollbar-thumb { background: #1a3050; border-radius: 2px; }
+
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
     }
     @keyframes progressPulse {
-      0% { transform: translateX(-100%); opacity: 0.5; }
+      0%   { transform: translateX(-100%); opacity: 0.5; }
       100% { transform: translateX(200%); opacity: 1; }
+    }
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
   </style>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useCallback } = React;
 
-    const LOGS = [
-      { level: "info",    time: "10:10:02", msg: "Market data stream connected — EURUSD" },
-      { level: "info",    time: "10:10:05", msg: "Strategy loaded: RSI_MACD_Breakout v2" },
-      { level: "info",    time: "10:10:12", msg: "Signal evaluated — direction: BUY" },
-      { level: "warning", time: "10:10:18", msg: "Spread widened to 2.4 pips — pausing entry" },
-      { level: "info",    time: "10:10:25", msg: "Spread normalized — resuming scan" },
-      { level: "info",    time: "10:10:31", msg: "Order queued: BUY 0.12 EURUSD @ 1.0840" },
-      { level: "error",   time: "10:10:33", msg: "Broker connection timeout — retrying..." },
-      { level: "info",    time: "10:10:35", msg: "Broker reconnected successfully" },
-      { level: "info",    time: "10:10:40", msg: "Order placed: ID #NX-00412" },
-      { level: "info",    time: "10:10:55", msg: "Trade monitoring active — SL: 1.0812 | TP: 1.0892" },
-    ];
+    const BASE = window.location.origin;
 
-    const LOG_COLORS = { info: "#00e5ff", warning: "#ffdd57", error: "#ff3860" };
-    const LOG_ICONS  = { info: "●", warning: "▲", error: "✖" };
+    const LOG_COLORS = { info: "#00e5ff", warning: "#ffdd57", error: "#ff3860", system: "#a78bfa" };
+    const LOG_ICONS  = { info: "●", warning: "▲", error: "✖", system: "◈" };
+    const COMPONENT_COLORS = {
+      "Agent":    "#00e5ff",
+      "RAG":      "#34d399",
+      "ChromaDB": "#f59e0b",
+      "LLM":      "#a78bfa",
+      "API":      "#38bdf8",
+      "Nancy":    "#00e5a0",
+    };
 
-    function TopBar({ time }) {
+    // ─── Top Bar ──────────────────────────────────────────────────────────────
+    function TopBar({ time, connected }) {
       return (
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -55,28 +58,18 @@
           flexShrink: 0,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <span style={{
-              fontSize: 18, fontWeight: 800, letterSpacing: "0.12em",
-              color: "#00e5ff", fontFamily: "monospace"
-            }}>
+            <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "0.12em", color: "#00e5ff", fontFamily: "monospace" }}>
               PROJECT NANCY
             </span>
-            <span style={{
-              fontSize: 11, color: "#2a4560",
-              fontFamily: "monospace", letterSpacing: "0.1em"
-            }}>
+            <span style={{ fontSize: 11, color: "#2a4560", fontFamily: "monospace", letterSpacing: "0.1em" }}>
               v0.1.0
             </span>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 11, color: "#3a5570", fontFamily: "monospace", letterSpacing: "0.12em" }}>
-                PAIR
-              </div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "#e0f0ff", fontFamily: "monospace", letterSpacing: "0.08em" }}>
-                EUR/USD
-              </div>
+              <div style={{ fontSize: 11, color: "#3a5570", fontFamily: "monospace", letterSpacing: "0.12em" }}>PAIR</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#e0f0ff", fontFamily: "monospace", letterSpacing: "0.08em" }}>EUR/USD</div>
             </div>
             <div style={{ width: 1, height: 28, background: "#0d1f35" }} />
             <div style={{ textAlign: "center" }}>
@@ -98,22 +91,16 @@
             }}>
               <span style={{
                 width: 7, height: 7, borderRadius: "50%",
-                background: "#00e5a0",
-                boxShadow: "0 0 6px #00e5a0",
+                background: connected ? "#00e5a0" : "#ff3860",
+                boxShadow: `0 0 6px ${connected ? "#00e5a0" : "#ff3860"}`,
                 display: "inline-block",
                 animation: "pulse 2s infinite",
               }} />
-              <span style={{
-                fontSize: 11, fontWeight: 700, color: "#00e5a0",
-                fontFamily: "monospace", letterSpacing: "0.12em"
-              }}>
-                NANCY ONLINE
+              <span style={{ fontSize: 11, fontWeight: 700, color: connected ? "#00e5a0" : "#ff3860", fontFamily: "monospace", letterSpacing: "0.12em" }}>
+                {connected ? "NANCY ONLINE" : "CONNECTING..."}
               </span>
             </div>
-            <div style={{
-              fontSize: 13, color: "#4a7090",
-              fontFamily: "monospace", letterSpacing: "0.08em"
-            }}>
+            <div style={{ fontSize: 13, color: "#4a7090", fontFamily: "monospace", letterSpacing: "0.08em" }}>
               {time}
             </div>
           </div>
@@ -121,279 +108,969 @@
       );
     }
 
-    function ChartPanel() {
+    // ─── Chart Panel ─────────────────────────────────────────────────────────
+    function ChartPanel({ drawings, setDrawings }) {
       const chartContainerRef = useRef(null);
+      const canvasRef = useRef(null);
       const [chartError, setChartError] = useState(null);
+      const [isDrawingMode, setIsDrawingMode] = useState(false);
+      const [isPlaying, setIsPlaying] = useState(false);
+      const [playbackSpeed, setPlaybackSpeed] = useState(0.5);
+      
+      const chartInstanceRef = useRef(null);
+      const seriesInstanceRef = useRef(null);
+      
+      const isDrawingInteractionRef = useRef(false);
+      const startPointRef = useRef(null);
+      const [currentTempLine, setCurrentTempLine] = useState(null);
+
+      const liveIntervalRef = useRef(null);
+      const playbackSourceRef = useRef(null);
+      const indicatorSeriesRef = useRef({});
+      const indicatorDefinitionsRef = useRef([]);
+      const latestIndicatorValuesRef = useRef({});
+      const tradeMarkersRef = useRef([]);
+      const markerApiRef = useRef(null);
+      const candleTimesRef = useRef([]);
+      const [indicatorLegend, setIndicatorLegend] = useState([]);
+
+      // Refs to hold latest state for closures inside event listeners
+      const drawingsRef = useRef(drawings);
+      useEffect(() => { drawingsRef.current = drawings; }, [drawings]);
+      
+      const tempLineRef = useRef(currentTempLine);
+      useEffect(() => { tempLineRef.current = currentTempLine; }, [currentTempLine]);
+
+      const renderDrawings = useCallback(() => {
+        const canvas = canvasRef.current;
+        const chart = chartInstanceRef.current;
+        const series = seriesInstanceRef.current;
+        if (!canvas || !chart || !series) return;
+        
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.strokeStyle = "#ffdd57";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+
+        const drawLine = (start, end, color, label) => {
+          if (!start.time || !end.time) return;
+          const x1 = chart.timeScale().timeToCoordinate(start.time);
+          const y1 = series.priceToCoordinate(start.price);
+          const x2 = chart.timeScale().timeToCoordinate(end.time);
+          const y2 = series.priceToCoordinate(end.price);
+          
+          if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
+            ctx.strokeStyle = color || "#00e5ff";
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            
+            // Draw handle points
+            ctx.fillStyle = "#ffdd57";
+            ctx.beginPath(); ctx.arc(x1, y1, 4, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(x2, y2, 4, 0, Math.PI*2); ctx.fill();
+
+            if (label) {
+              ctx.setLineDash([]);
+              ctx.fillStyle = color || "#00e5ff";
+              ctx.font = "10px monospace";
+              ctx.fillText(label, x1 + 6, y1 - 8);
+              ctx.setLineDash([4, 4]);
+            }
+          }
+        };
+
+        drawingsRef.current.forEach(d => drawLine(d.start, d.end, d.color || "#00e5ff", d.label));
+        if (tempLineRef.current) {
+           drawLine(tempLineRef.current.start, tempLineRef.current.end, "#ff3860");
+        }
+      }, []);
+
+      const clearIndicatorSeries = useCallback(() => {
+        const chart = chartInstanceRef.current;
+        Object.values(indicatorSeriesRef.current).forEach(series => {
+          if (!chart || !series) return;
+          try { chart.removeSeries(series); } catch (_) {}
+        });
+        indicatorSeriesRef.current = {};
+        indicatorDefinitionsRef.current = [];
+        latestIndicatorValuesRef.current = {};
+        setIndicatorLegend([]);
+      }, []);
+
+      const ensureIndicatorSeries = useCallback((definitions = []) => {
+        const chart = chartInstanceRef.current;
+        if (!chart || !window.LightweightCharts) return;
+
+        const nextIds = new Set(definitions.map(def => def.id));
+        Object.entries(indicatorSeriesRef.current).forEach(([id, series]) => {
+          if (!nextIds.has(id)) {
+            try { chart.removeSeries(series); } catch (_) {}
+            delete indicatorSeriesRef.current[id];
+            delete latestIndicatorValuesRef.current[id];
+          }
+        });
+
+        definitions.forEach(def => {
+          if (indicatorSeriesRef.current[def.id]) return;
+          indicatorSeriesRef.current[def.id] = chart.addSeries(LightweightCharts.LineSeries, {
+            color: def.color || "#ffdd57",
+            lineWidth: 2,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: true,
+          });
+        });
+        indicatorDefinitionsRef.current = definitions;
+      }, []);
+
+      const refreshIndicatorLegend = useCallback(() => {
+        setIndicatorLegend(indicatorDefinitionsRef.current.map(def => ({
+          id: def.id,
+          title: def.title || def.id,
+          color: def.color || "#ffdd57",
+          value: latestIndicatorValuesRef.current[def.id],
+        })).filter(item => item.value !== undefined && item.value !== null));
+      }, []);
+
+      const applyIndicatorPayload = useCallback((payload) => {
+        const indicators = payload?.indicators;
+        if (!indicators) return;
+
+        const definitions = indicators.definitions || indicatorDefinitionsRef.current;
+        if (definitions && definitions.length) ensureIndicatorSeries(definitions);
+
+        if (indicators.series) {
+          Object.entries(indicators.series).forEach(([id, points]) => {
+            const line = indicatorSeriesRef.current[id];
+            if (!line || !Array.isArray(points)) return;
+            const clean = points.filter(point => point && point.time && typeof point.value === "number");
+            line.setData(clean);
+            if (clean.length > 0) latestIndicatorValuesRef.current[id] = clean[clean.length - 1].value;
+          });
+        }
+
+        if (indicators.points) {
+          Object.entries(indicators.points).forEach(([id, point]) => {
+            const line = indicatorSeriesRef.current[id];
+            if (!line || !point || !point.time || typeof point.value !== "number") return;
+            line.update(point);
+            latestIndicatorValuesRef.current[id] = point.value;
+          });
+        }
+
+        refreshIndicatorLegend();
+      }, [ensureIndicatorSeries, refreshIndicatorLegend]);
+
+      const applyTradeMarkers = useCallback((markers) => {
+        tradeMarkersRef.current = markers;
+        const series = seriesInstanceRef.current;
+        if (!series) return;
+
+        if (typeof series.setMarkers === "function") {
+          series.setMarkers(markers);
+          return;
+        }
+
+        if (window.LightweightCharts?.createSeriesMarkers) {
+          if (!markerApiRef.current) {
+            markerApiRef.current = LightweightCharts.createSeriesMarkers(series, markers);
+          } else if (typeof markerApiRef.current.setMarkers === "function") {
+            markerApiRef.current.setMarkers(markers);
+          }
+        }
+      }, []);
+
+      const clearTradeMarkers = useCallback(() => {
+        applyTradeMarkers([]);
+      }, [applyTradeMarkers]);
+
+      const rememberCandleTimes = useCallback((times, mode = "append") => {
+        const clean = times.filter(time => typeof time === "number" && Number.isFinite(time));
+        const merged = mode === "replace" ? clean : [...candleTimesRef.current, ...clean];
+        candleTimesRef.current = Array.from(new Set(merged)).sort((a, b) => a - b);
+      }, []);
+
+
+      const startLivePolling = useCallback(() => {
+        if (!seriesInstanceRef.current) return;
+        clearIndicatorSeries();
+        clearTradeMarkers();
+        candleTimesRef.current = [];
+        
+        // Helper: extract unix timestamp from a bar (handles both TV native and Twelve Data formats)
+        const getBarTime = (item) => {
+          if (item.time && typeof item.time === "number") return item.time; // TV native unix timestamp
+          if (item.datetime) { try { return Math.floor(new Date(item.datetime.replace(" ", "T") + "Z").getTime() / 1000); } catch { return null; } }
+          return null;
+        };
+
+        fetch(`${BASE}/tv/history/EURUSD?interval=5min&outputsize=200`)
+          .then(r => r.json())
+          .then(data => {
+            if (data && Array.isArray(data)) {
+              const formatted = data.slice().reverse().map(item => {
+                const t = getBarTime(item);
+                return { time: t, open: item.open, high: item.high, low: item.low, close: item.close };
+              }).filter(i => i.time);
+              if (formatted.length > 0) {
+                seriesInstanceRef.current.setData(formatted);
+                rememberCandleTimes(formatted.map(item => item.time), "replace");
+              }
+              if (chartInstanceRef.current && chartContainerRef.current) {
+                chartInstanceRef.current.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight });
+              }
+            }
+          })
+          .catch(console.error);
+
+        liveIntervalRef.current = setInterval(() => {
+          fetch(`${BASE}/tv/history/EURUSD?interval=5min&outputsize=2`)
+            .then(r => r.json())
+            .then(data => {
+              if (data && data.length > 0) {
+                const item = data[0];
+                const t = getBarTime(item);
+                if (t) {
+                  seriesInstanceRef.current.update({ time: t, open: item.open, high: item.high, low: item.low, close: item.close });
+                  rememberCandleTimes([t]);
+                  renderDrawings();
+                }
+              }
+            }).catch(console.error);
+        }, 30000); // Poll every 30s (TV data is free, but no need to spam subprocess calls)
+      }, [renderDrawings, clearIndicatorSeries, clearTradeMarkers, rememberCandleTimes]);
+
+      const startPlayback = () => {
+        if (!seriesInstanceRef.current) return;
+        setIsPlaying(true);
+        setDrawings([]);
+        clearIndicatorSeries();
+        clearTradeMarkers();
+        candleTimesRef.current = [];
+        
+        if (liveIntervalRef.current) clearInterval(liveIntervalRef.current);
+        if (playbackSourceRef.current) playbackSourceRef.current.close();
+        
+        const es = new EventSource(`${BASE}/backtest/replay/latest?speed=${playbackSpeed}`);
+        playbackSourceRef.current = es;
+        
+        es.onmessage = (e) => {
+          try {
+             const payload = JSON.parse(e.data);
+             if (payload.type === "setup") {
+                window.dispatchEvent(new CustomEvent("backtest_setup", { detail: payload }));
+             } else if (payload.type === "tick" || payload.type === "step") {
+                window.dispatchEvent(new CustomEvent("backtest_tick", { detail: payload }));
+             } else if (payload.type === "trade") {
+                window.dispatchEvent(new CustomEvent("backtest_trade", { detail: payload }));
+             } else if (payload.type === "complete") {
+                window.dispatchEvent(new CustomEvent("backtest_complete", { detail: payload }));
+                setIsPlaying(false);
+                es.close();
+             } else if (payload.type === "error") {
+                window.dispatchEvent(new CustomEvent("backtest_error", { detail: payload }));
+                setIsPlaying(false);
+                es.close();
+                console.warn(payload.message || "Replay failed");
+             }
+          } catch (err) { console.error(err); }
+        };
+        
+        es.onerror = () => {
+           setIsPlaying(false);
+           es.close();
+        };
+      };
+
+      const stopPlayback = () => {
+        if (playbackSourceRef.current) playbackSourceRef.current.close();
+        setIsPlaying(false);
+        startLivePolling();
+      };
+
+      // ─── Event Listeners for Nancy's Chat Backtest Stream ────────────────
+      useEffect(() => {
+        const getRobustTime = (val) => {
+           if (!val) return null;
+           if (typeof val === "number") return val > 10000000000 ? Math.floor(val / 1000) : val;
+           if (typeof val === "object" && val.year && val.month && val.day) {
+             return Math.floor(Date.UTC(val.year, val.month - 1, val.day) / 1000);
+           }
+           try {
+             const raw = String(val).trim();
+             if (!raw) return null;
+             if (/^\d+(?:\.\d+)?$/.test(raw)) {
+               const num = Number(raw);
+               return num > 10000000000 ? Math.floor(num / 1000) : Math.floor(num);
+             }
+             const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+             const date = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`);
+             const time = Math.floor(date.getTime() / 1000);
+             return Number.isFinite(time) ? time : null;
+           } catch { return null; }
+        };
+
+        const estimateCandleSpacing = () => {
+          const times = candleTimesRef.current;
+          if (times.length < 2) return 300;
+          const diffs = [];
+          for (let i = 1; i < times.length; i++) {
+            const diff = times[i] - times[i - 1];
+            if (diff > 0) diffs.push(diff);
+          }
+          if (!diffs.length) return 300;
+          diffs.sort((a, b) => a - b);
+          return diffs[Math.floor(diffs.length / 2)] || 300;
+        };
+
+        const snapTradeTime = (rawTime) => {
+          const time = getRobustTime(rawTime);
+          if (!time) return null;
+          const times = candleTimesRef.current;
+          if (!times.length) return time;
+          let nearest = times[0];
+          let nearestDiff = Math.abs(time - nearest);
+          for (const candleTime of times) {
+            const diff = Math.abs(time - candleTime);
+            if (diff < nearestDiff) {
+              nearest = candleTime;
+              nearestDiff = diff;
+            }
+          }
+          const spacing = estimateCandleSpacing();
+          const min = times[0] - spacing * 3;
+          const max = times[times.length - 1] + spacing * 3;
+          if (time < min || time > max) return null;
+          return nearestDiff <= spacing * 3 ? nearest : null;
+        };
+
+        const addTradeMarker = (payload) => {
+          const markerTime = snapTradeTime(payload.time);
+          if (!markerTime) return null;
+
+          const action = String(payload.action || "TRADE").toUpperCase();
+          const isBuy = action === "BUY";
+          const isSell = action === "SELL";
+          const color = isBuy ? "#00e5a0" : isSell ? "#ff3860" : "#ffdd57";
+          const marker = {
+            time: markerTime,
+            position: isSell ? "aboveBar" : isBuy ? "belowBar" : "inBar",
+            color,
+            shape: isSell ? "arrowDown" : isBuy ? "arrowUp" : "circle",
+            text: `${action}${payload.estimated ? "*" : ""}`,
+          };
+
+          const next = [...tradeMarkersRef.current, marker]
+            .sort((a, b) => a.time - b.time)
+            .slice(-500);
+          applyTradeMarkers(next);
+          return { time: markerTime, color, action };
+        };
+
+        const handleSetup = (e) => {
+          setDrawings([]);
+          clearTradeMarkers();
+          candleTimesRef.current = [];
+          setIsPlaying(true);
+          if (liveIntervalRef.current) clearInterval(liveIntervalRef.current);
+          if (playbackSourceRef.current) playbackSourceRef.current.close();
+          
+          const payload = e.detail;
+          if (payload && (payload.status === "preparing" || payload.status === "fallback")) {
+            clearIndicatorSeries();
+          }
+          if (payload && payload.data && seriesInstanceRef.current) {
+            clearIndicatorSeries();
+            const formatted = payload.data.map(item => {
+              const t = getRobustTime(item.time || item.datetime);
+              return { time: t, open: item.open, high: item.high, low: item.low, close: item.close };
+            }).filter(i => i.time);
+            
+            // Sort by time just to be absolutely certain it's chronological for Lightweight Charts
+            formatted.sort((a, b) => a.time - b.time);
+            
+            if (formatted.length > 0) {
+              seriesInstanceRef.current.setData(formatted);
+              rememberCandleTimes(formatted.map(item => item.time), "replace");
+            }
+            applyIndicatorPayload(payload);
+          }
+        };
+
+        const handleTick = (e) => {
+          if (!seriesInstanceRef.current || !chartInstanceRef.current) return;
+          const payload = e.detail;
+          
+          if (payload.data) {
+             // Actual OHLCV bar data
+             const item = payload.data;
+             const time = getRobustTime(item.time || item.datetime);
+             if (time) {
+                seriesInstanceRef.current.update({ time, open: item.open, high: item.high, low: item.low, close: item.close });
+                rememberCandleTimes([time]);
+                applyIndicatorPayload(payload);
+                chartInstanceRef.current.timeScale().scrollToRealTime();
+             }
+          } else if (payload.price) {
+             // Legacy fallback
+             const time = getRobustTime(payload.time);
+             if (time) {
+               seriesInstanceRef.current.update({ time, open: payload.price, high: payload.price, low: payload.price, close: payload.price });
+               rememberCandleTimes([time]);
+               applyIndicatorPayload(payload);
+               chartInstanceRef.current.timeScale().scrollToRealTime();
+             }
+          }
+        };
+
+        const handleTrade = (e) => {
+          if (!seriesInstanceRef.current || !chartInstanceRef.current) return;
+          const payload = e.detail;
+          const marker = addTradeMarker(payload);
+          
+          if (marker && payload.price) {
+             setDrawings(prev => [...prev, {
+                id: Date.now() + Math.random(),
+                start: { time: marker.time, price: payload.price },
+                end: { time: marker.time + estimateCandleSpacing(), price: payload.price },
+                color: marker.color,
+                label: `${marker.action}${payload.estimated ? "*" : ""}`,
+             }]);
+          }
+        };
+
+        const handleComplete = (e) => {
+          setIsPlaying(false);
+        };
+
+        const handleError = (e) => {
+          setIsPlaying(false);
+          // Don't start live polling on error so the chart doesn't suddenly reset and confuse the user
+        };
+
+        window.addEventListener("backtest_setup", handleSetup);
+        window.addEventListener("backtest_tick", handleTick);
+        window.addEventListener("backtest_trade", handleTrade);
+        window.addEventListener("backtest_complete", handleComplete);
+        window.addEventListener("backtest_error", handleError);
+
+        return () => {
+          window.removeEventListener("backtest_setup", handleSetup);
+          window.removeEventListener("backtest_tick", handleTick);
+          window.removeEventListener("backtest_trade", handleTrade);
+          window.removeEventListener("backtest_complete", handleComplete);
+          window.removeEventListener("backtest_error", handleError);
+        };
+      }, [clearIndicatorSeries, clearTradeMarkers, applyIndicatorPayload, applyTradeMarkers, rememberCandleTimes]);
 
       useEffect(() => {
         let chart;
-        let intervalId;
-        
         try {
-          if (!window.LightweightCharts) {
-            throw new Error("LightweightCharts library failed to load from CDN.");
-          }
+          if (!window.LightweightCharts) throw new Error("LightweightCharts failed to load.");
 
-          const handleResize = () => {
-            if (chartContainerRef.current && chart) {
-              chart.applyOptions({ 
-                width: chartContainerRef.current.clientWidth,
-                height: chartContainerRef.current.clientHeight 
-              });
+          const resizeObserver = new ResizeObserver(entries => {
+            if (entries.length === 0 || !chartContainerRef.current) return;
+            const newRect = entries[0].contentRect;
+            chart.applyOptions({ width: newRect.width, height: newRect.height });
+            if (canvasRef.current) {
+               canvasRef.current.width = newRect.width;
+               canvasRef.current.height = newRect.height;
+               renderDrawings();
             }
-          };
+          });
+          resizeObserver.observe(chartContainerRef.current);
 
           chart = LightweightCharts.createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth || 600,
             height: chartContainerRef.current.clientHeight || 400,
-            layout: {
-              background: { type: 'solid', color: '#070912' },
-              textColor: '#4a7090',
-            },
-            grid: {
-              vertLines: { color: '#0d1f35' },
-              horzLines: { color: '#0d1f35' },
-            },
-            crosshair: {
-              mode: 0,
-            },
-            rightPriceScale: {
-              borderColor: '#0d1f35',
-            },
-            timeScale: {
-              borderColor: '#0d1f35',
-              timeVisible: true,
-              secondsVisible: false,
-            },
+            layout: { background: { type: "solid", color: "#070912" }, textColor: "#4a7090" },
+            grid: { vertLines: { color: "#0d1f35" }, horzLines: { color: "#0d1f35" } },
+            crosshair: { mode: 0 },
+            rightPriceScale: { borderColor: "#0d1f35" },
+            timeScale: { borderColor: "#0d1f35", timeVisible: true, secondsVisible: false },
           });
+          chartInstanceRef.current = chart;
 
-          const candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-            upColor: '#00e5a0',
-            downColor: '#ff3860',
-            borderDownColor: '#ff3860',
-            borderUpColor: '#00e5a0',
-            wickDownColor: '#ff3860',
-            wickUpColor: '#00e5a0',
+          const series = chart.addSeries(LightweightCharts.CandlestickSeries, {
+            upColor: "#00e5a0", downColor: "#ff3860",
+            borderUpColor: "#00e5a0", borderDownColor: "#ff3860",
+            wickUpColor: "#00e5a0", wickDownColor: "#ff3860",
           });
+          seriesInstanceRef.current = series;
 
-          fetch('/tv/history/EURUSD?interval=5min&outputsize=200')
-            .then(res => res.json())
-            .then(data => {
-              if (data && Array.isArray(data)) {
-                const formattedData = data.slice().reverse().map(item => {
-                  let timeVal;
-                  try {
-                     timeVal = Math.floor(new Date(item.datetime.replace(' ', 'T') + "Z").getTime() / 1000);
-                  } catch(e) { timeVal = null; }
-                  return {
-                    time: timeVal,
-                    open: item.open,
-                    high: item.high,
-                    low: item.low,
-                    close: item.close,
-                  };
-                }).filter(i => i.time);
-                if (formattedData.length > 0) {
-                  candlestickSeries.setData(formattedData);
-                }
-              } else if (data && data.detail) {
-                 console.error("Backend Error:", data.detail);
-              }
-            })
-            .catch(err => console.error("Error fetching historical data:", err));
+          // Re-render drawings when the chart pans or zooms
+          chart.timeScale().subscribeVisibleTimeRangeChange(() => renderDrawings());
+          chart.timeScale().subscribeVisibleLogicalRangeChange(() => renderDrawings());
 
-          window.addEventListener('resize', handleResize);
+          // Initial load
+          startLivePolling();
 
-          intervalId = setInterval(() => {
-            fetch('/tv/history/EURUSD?interval=5min&outputsize=2')
-              .then(res => res.json())
-              .then(data => {
-                if (data && data.length > 0) {
-                  const item = data[0]; 
-                  const unixTime = Math.floor(new Date(item.datetime.replace(' ', 'T') + "Z").getTime() / 1000);
-                  candlestickSeries.update({
-                    time: unixTime,
-                    open: item.open,
-                    high: item.high,
-                    low: item.low,
-                    close: item.close,
-                  });
-                }
-              })
-              .catch(console.error);
-          }, 10000);
-
-          return () => {
-            window.removeEventListener('resize', handleResize);
-            clearInterval(intervalId);
-            chart.remove();
+          return () => { 
+            resizeObserver.disconnect();
+            if (liveIntervalRef.current) clearInterval(liveIntervalRef.current);
+            if (playbackSourceRef.current) playbackSourceRef.current.close();
+            chart.remove(); 
           };
-        } catch (err) {
-          console.error("ChartPanel Error:", err);
-          setChartError(err.toString());
+        } catch (err) { setChartError(err.toString()); }
+      }, []); // Mount only once
+
+      useEffect(() => {
+        renderDrawings();
+      }, [renderDrawings, drawings, currentTempLine]);
+
+      const handleMouseDown = (e) => {
+        if (!isDrawingMode || !chartInstanceRef.current || !seriesInstanceRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        const time = chartInstanceRef.current.timeScale().coordinateToTime(x);
+        const price = seriesInstanceRef.current.coordinateToPrice(y);
+        
+        if (time !== null && price !== null) {
+          isDrawingInteractionRef.current = true;
+          startPointRef.current = { time, price };
+          setCurrentTempLine({ start: { time, price }, end: { time, price } });
+          chartInstanceRef.current.applyOptions({ handleScroll: false, handleScale: false });
         }
-      }, []);
+      };
+
+      const handleMouseMove = (e) => {
+        if (!isDrawingInteractionRef.current || !chartInstanceRef.current || !seriesInstanceRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        
+        const time = chartInstanceRef.current.timeScale().coordinateToTime(x);
+        const price = seriesInstanceRef.current.coordinateToPrice(y);
+        
+        if (time !== null && price !== null) {
+          setCurrentTempLine({ start: startPointRef.current, end: { time, price } });
+        }
+      };
+
+      const handleMouseUp = (e) => {
+        if (!isDrawingInteractionRef.current) return;
+        isDrawingInteractionRef.current = false;
+        
+        if (currentTempLine) {
+           setDrawings(prev => [...prev, { id: Date.now(), ...currentTempLine }]);
+        }
+        setCurrentTempLine(null);
+        setIsDrawingMode(false); // Auto-exit drawing mode after drawing one line
+        chartInstanceRef.current.applyOptions({ handleScroll: true, handleScale: true });
+      };
 
       return (
-        <div style={{
-          flex: "0 0 70%", display: "flex", flexDirection: "column",
-          borderRight: "1px solid #0d1f35", overflow: "hidden",
-        }}>
-          <div style={{
-            padding: "10px 18px", borderBottom: "1px solid #0d1f35",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            background: "#080c18",
-            zIndex: 10,
-          }}>
+        <div style={{ flex: "0 0 70%", display: "flex", flexDirection: "column", borderRight: "1px solid #0d1f35", overflow: "hidden" }}>
+          <div style={{ padding: "10px 18px", borderBottom: "1px solid #0d1f35", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#080c18" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{
-                fontSize: 11, fontWeight: 700, color: "#00e5ff",
-                fontFamily: "monospace", letterSpacing: "0.12em"
-              }}>
-                EURUSD · M5
-              </span>
-              <span style={{
-                fontSize: 10, color: "#2a4560",
-                fontFamily: "monospace", padding: "2px 6px",
-                border: "1px solid #0d1f35", borderRadius: 2
-              }}>
-                NANCY CHART
-              </span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#00e5ff", fontFamily: "monospace", letterSpacing: "0.12em" }}>EURUSD · M5</span>
+              <span style={{ fontSize: 10, color: "#2a4560", fontFamily: "monospace", padding: "2px 6px", border: "1px solid #0d1f35", borderRadius: 2 }}>NANCY CHART</span>
+            </div>
+            
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* Playback Controls */}
+              <select 
+                value={playbackSpeed} 
+                onChange={e => setPlaybackSpeed(Number(e.target.value))}
+                disabled={isPlaying}
+                style={{
+                  background: "#080c18", color: "#4a7090", border: "1px solid #0d1f35",
+                  padding: "4px", borderRadius: 3, fontSize: 10, fontFamily: "monospace", outline: "none", cursor: isPlaying ? "not-allowed" : "pointer",
+                }}>
+                <option value={1.0}>1x SPEED</option>
+                <option value={0.5}>2x SPEED</option>
+                <option value={0.2}>5x SPEED</option>
+                <option value={0.1}>10x SPEED</option>
+              </select>
+
+              {isPlaying ? (
+                <button 
+                  onClick={stopPlayback}
+                  style={{
+                    background: "#ff386022", color: "#ff3860", border: "1px solid #ff3860",
+                    padding: "4px 10px", borderRadius: 3, fontSize: 10, fontFamily: "monospace", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 4
+                  }}>
+                  <span style={{ fontSize: 12 }}>⏹</span> STOP PLAYBACK
+                </button>
+              ) : (
+                <button 
+                  onClick={startPlayback}
+                  style={{
+                    background: "#00e5a022", color: "#00e5a0", border: "1px solid #00e5a0",
+                    padding: "4px 10px", borderRadius: 3, fontSize: 10, fontFamily: "monospace", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 4
+                  }}>
+                  <span style={{ fontSize: 12 }}>▶</span> REPLAY LAST
+                </button>
+              )}
+              
+              <div style={{ width: 1, height: 16, background: "#0d1f35", margin: "0 4px" }} />
+              
+              <button 
+                onClick={() => setIsDrawingMode(!isDrawingMode)}
+                style={{
+                  background: isDrawingMode ? "#ffdd5722" : "transparent",
+                  color: isDrawingMode ? "#ffdd57" : "#4a7090",
+                  border: `1px solid ${isDrawingMode ? "#ffdd57" : "#0d1f35"}`,
+                  padding: "4px 10px", borderRadius: 3, fontSize: 10, fontFamily: "monospace", cursor: "pointer",
+                }}>
+                {isDrawingMode ? "✍ DRAWING..." : "✎ PEN"}
+              </button>
+              <button 
+                onClick={() => setDrawings([])}
+                style={{
+                  background: "transparent", color: "#ff3860", border: "1px solid #0d1f35",
+                  padding: "4px 10px", borderRadius: 3, fontSize: 10, fontFamily: "monospace", cursor: "pointer",
+                }}>
+                CLEAR
+              </button>
             </div>
           </div>
-          
-          {chartError ? (
-            <div style={{ padding: "20px", color: "#ff3860", fontFamily: "monospace", flex: 1 }}>
-              <h3>Chart Error</h3>
-              <pre>{chartError}</pre>
-            </div>
-          ) : (
-            <div 
-              ref={chartContainerRef}
-              style={{
-                flex: 1, padding: 0,
-                background: "#070912",
-                overflow: "hidden",
-                position: "relative",
-                minHeight: "300px"
-              }}
-            />
-          )}
+          {chartError
+            ? <div style={{ padding: 20, color: "#ff3860", fontFamily: "monospace", flex: 1 }}><h3>Chart Error</h3><pre>{chartError}</pre></div>
+            : <div style={{ flex: 1, position: "relative", background: "#070912", overflow: "hidden" }}>
+                <div ref={chartContainerRef} style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }} />
+                <canvas 
+                  ref={canvasRef}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                  style={{
+                    position: "absolute", top: 0, left: 0, zIndex: 10,
+                    width: "100%", height: "100%",
+                    pointerEvents: isDrawingMode ? "auto" : "none",
+                    cursor: isDrawingMode ? "crosshair" : "default"
+                  }}
+                />
+                {indicatorLegend.length > 0 && (
+                  <div style={{
+                    position: "absolute", top: 12, left: 12, zIndex: 12,
+                    display: "flex", flexDirection: "column", gap: 4,
+                    padding: "7px 9px", border: "1px solid #0d1f35", borderRadius: 3,
+                    background: "#060a12dd", pointerEvents: "none", maxWidth: 220,
+                  }}>
+                    {indicatorLegend.map(item => (
+                      <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10, fontFamily: "monospace", color: "#8bb6d6", whiteSpace: "nowrap" }}>
+                        <span style={{ width: 18, height: 2, background: item.color, display: "inline-block", flexShrink: 0 }} />
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{item.title}</span>
+                        <span style={{ color: item.color }}>{Number(item.value).toFixed(5)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+          }
         </div>
       );
     }
 
-    function ChatPanel() {
-      const [messages, setMessages] = useState([]);
-      const [input, setInput] = useState("");
-      const [thinking, setThinking] = useState(false);
-      const messagesEndRef = useRef(null);
+    // ─── Live Log Stream Panel (TOP of sidebar) ───────────────────────────────
+    function LogPanel({ logs, connected }) {
+      const bottomRef = useRef(null);
+      useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
 
-      const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      return (
+        <div style={{ flex: "0 0 45%", display: "flex", flexDirection: "column", overflow: "hidden", borderBottom: "1px solid #0d1f35" }}>
+          {/* Header */}
+          <div style={{ padding: "10px 16px", borderBottom: "1px solid #0d1f35", background: "#080c18", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, color: "#00e5ff", fontFamily: "monospace", letterSpacing: "0.12em", fontWeight: 700 }}>LIVE LOG STREAM</span>
+              <span style={{ fontSize: 9, color: "#2a4560", fontFamily: "monospace", letterSpacing: "0.08em" }}>— DATA FLOW</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "#ff3860" : "#2a4560", display: "inline-block", boxShadow: connected ? "0 0 5px #ff3860" : "none", animation: connected ? "pulse 1.5s infinite" : "none" }} />
+              <span style={{ fontSize: 9, color: connected ? "#ff3860" : "#2a4560", fontFamily: "monospace", letterSpacing: "0.1em" }}>{connected ? "LIVE" : "OFFLINE"}</span>
+            </div>
+          </div>
+
+          {/* Log entries */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "6px 0", fontFamily: "monospace", fontSize: 11 }}>
+            {logs.length === 0 && (
+              <div style={{ padding: "16px 14px", color: "#2a4560", fontSize: 11, fontFamily: "monospace" }}>
+                Waiting for backend events...
+              </div>
+            )}
+            {logs.map((log, i) => {
+              const color = LOG_COLORS[log.level] || "#00e5ff";
+              const compColor = COMPONENT_COLORS[log.component] || "#4a7090";
+              return (
+                <div key={i} style={{
+                  display: "flex", alignItems: "flex-start", gap: 7,
+                  padding: "4px 12px",
+                  borderLeft: `2px solid ${color}22`,
+                  marginBottom: 1,
+                  background: i % 2 === 0 ? "#07091208" : "transparent",
+                  animation: "fadeSlideIn 0.2s ease-out",
+                }}>
+                  <span style={{ color, fontSize: 8, marginTop: 2, flexShrink: 0 }}>{LOG_ICONS[log.level] || "●"}</span>
+                  <span style={{ color: "#2a4560", flexShrink: 0, fontSize: 10, minWidth: 54 }}>{log.time}</span>
+                  <span style={{
+                    color: compColor, flexShrink: 0,
+                    fontSize: 9, letterSpacing: "0.08em",
+                    minWidth: 64, fontWeight: 700,
+                  }}>
+                    [{log.component}]
+                  </span>
+                  <span style={{ color: "#6a90a0", lineHeight: 1.4, fontSize: 10 }}>{log.message}</span>
+                </div>
+              );
+            })}
+            <div ref={bottomRef} />
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Agent Chat Panel (BOTTOM of sidebar) ────────────────────────────────
+    function ChatPanel({ drawings }) {
+      const [messages, setMessages] = useState([]);
+      const [input, setInput]       = useState("");
+      const [thinking, setThinking] = useState(false);
+      const [backtestRunning, setBacktestRunning] = useState(false);
+      const [backtestProgress, setBacktestProgress] = useState(null);
+      const backtestSourceRef = useRef(null);
+      const bottomRef = useRef(null);
+
+      useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, thinking, backtestProgress]);
+
+      const formatApiError = (err, fallback) => {
+        if (Array.isArray(err?.detail)) {
+          return err.detail.map(item => {
+            const loc = Array.isArray(item.loc) ? item.loc.join(".") : "request";
+            return `${loc}: ${item.msg}`;
+          }).join("; ");
+        }
+        return err?.detail?.message || err?.detail || fallback || "Failed to reach Nancy.";
       };
 
-      useEffect(() => {
-        scrollToBottom();
-      }, [messages, thinking]);
+      const startBacktestStream = (config) => {
+        setBacktestRunning(true);
+        setBacktestProgress({ bar: 0, total_bars: config.max_bars || 200, status: "connecting" });
+        
+        setMessages(prev => [...prev, { 
+          from: "nancy", 
+          text: `🚀 Starting backtest: ${config.strategy?.name || "Strategy"}\n📊 ${config.symbol} · ${config.timeframe}min · from ${config.start_date}\n⏳ Processing up to ${config.max_bars || 200} bars...`
+        }]);
+
+        // POST to /backtest/run with fetch + ReadableStream for SSE
+        fetch(`${BASE}/backtest/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        }).then(response => {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          function read() {
+            reader.read().then(({ done, value }) => {
+              if (done) {
+                setBacktestRunning(false);
+                setBacktestProgress(null);
+                return;
+              }
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n");
+              buffer = lines.pop(); // Keep incomplete line in buffer
+
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  try {
+                    const payload = JSON.parse(line.substring(6));
+                    
+                    if (payload.type === "setup") {
+                      window.dispatchEvent(new CustomEvent("backtest_setup", { detail: payload }));
+                    } else if (payload.type === "step") {
+                      window.dispatchEvent(new CustomEvent("backtest_tick", { detail: payload }));
+                      setBacktestProgress({
+                        bar: payload.bar,
+                        total_bars: payload.total_bars,
+                        price: payload.price,
+                        action: payload.action,
+                        position: payload.position,
+                        balance: payload.balance,
+                        total_trades: payload.total_trades,
+                        status: "running",
+                      });
+                    } else if (payload.type === "tick") {
+                      window.dispatchEvent(new CustomEvent("backtest_tick", { detail: payload }));
+                      setBacktestProgress(prev => ({
+                        ...(prev || {}),
+                        bar: payload.bar,
+                        total_bars: payload.total_bars,
+                        price: payload.data?.close,
+                        action: "replay",
+                        position: prev?.position || "CHART",
+                        status: "running",
+                      }));
+                    } else if (payload.type === "trade") {
+                      window.dispatchEvent(new CustomEvent("backtest_trade", { detail: payload }));
+                      const emoji = payload.action === "BUY" ? "🟢" : payload.action === "SELL" ? "🔴" : "⚪";
+                      const pnlStr = payload.pnl_pct ? ` | P&L: ${payload.pnl_pct > 0 ? "+" : ""}${payload.pnl_pct.toFixed(2)}%` : "";
+                      const estimateStr = payload.estimated ? " (estimated crossover marker)" : "";
+                      setMessages(prev => [...prev, {
+                        from: "nancy",
+                        text: `${emoji} ${payload.action} @ ${payload.price}${pnlStr}${estimateStr}`,
+                      }]);
+                    } else if (payload.type === "complete") {
+                      window.dispatchEvent(new CustomEvent("backtest_complete", { detail: payload }));
+                      setBacktestRunning(false);
+                      setBacktestProgress(null);
+                      
+                      const s = payload;
+                      const returnColor = s.return_pct >= 0 ? "#00e5a0" : "#ff3860";
+                      let resultMsg = {
+                        from: "nancy",
+                        text: `━━━ BACKTEST COMPLETE ━━━\n\n` +
+                              `📈 Strategy: ${s.strategy_name}\n` +
+                              `📊 Bars: ${s.bars_processed}\n` +
+                              `${s.requested_start_date ? `🗓 Requested start: ${s.requested_start_date}\n` : ""}` +
+                              `${s.first_bar_datetime && s.last_bar_datetime ? `🕒 Chart range: ${s.first_bar_datetime} → ${s.last_bar_datetime}\n` : ""}` +
+                              `${s.days_covered !== undefined ? `📆 Days covered: ${s.days_covered}\n` : ""}` +
+                              `🔄 Trades: ${s.total_trades} (${s.winning_trades}W / ${s.losing_trades}L)\n` +
+                              `🎯 Win Rate: ${s.win_rate}%\n` +
+                              `💰 Return: ${s.return_pct >= 0 ? "+" : ""}${s.return_pct}%\n` +
+                              `📉 Max Drawdown: ${s.max_drawdown_pct}%\n` +
+                              `💵 Final Balance: $${s.final_balance.toLocaleString()}\n` +
+                              `${s.indicator_overlays?.length ? `📚 Chart overlays: ${s.indicator_overlays.join(", ")}\n` : ""}` +
+                              `${s.estimated_signals ? `📍 Estimated signals: ${s.estimated_signals} local crossover markers\n` : ""}` +
+                              `${s.trades_unavailable ? "⚠ Official trade rows unavailable from TradingView; markers are estimated from the plotted logic.\n" : ""}` +
+                              `${s.trade_rows_partial ? `⚠ Official trade rows partial: ${s.trade_rows_count}/${s.trade_rows_total_reported} rows from ${s.trade_rows_source}.\n` : ""}` +
+                              `${s.trade_rows_available && !s.trade_rows_partial ? `✅ Official trade rows: ${s.trade_rows_count} from ${s.trade_rows_source}.\n` : ""}` +
+                              `\n${s.trades_unavailable ? "Avg Win/Loss: unavailable without trade rows" : s.trade_rows_partial ? `Avg Win/Loss captured rows: +${s.avg_win_pct || 0}% / ${s.avg_loss_pct || 0}%` : `Avg Win: +${s.avg_win_pct || 0}% | Avg Loss: ${s.avg_loss_pct || 0}%`}`,
+                        isResult: true,
+                        returnPct: s.return_pct,
+                      };
+                      
+                      if (s.total_trades === 0) {
+                        setMessages(prev => [...prev, resultMsg, {
+                          from: "nancy",
+                          text: "I finished the backtest, but your strategy didn't execute a single trade! The entry conditions were simply never met during this historical window. If you want to test further back, just ask me to 'backtest this on 30 days of data'."
+                        }]);
+                      } else {
+                        setMessages(prev => [...prev, resultMsg]);
+                      }
+                    } else if (payload.type === "error") {
+                      window.dispatchEvent(new CustomEvent("backtest_error", { detail: payload }));
+                      setBacktestRunning(false);
+                      setBacktestProgress(null);
+                      setMessages(prev => [...prev, {
+                        from: "nancy",
+                        text: `❌ Backtest Error: ${payload.message}`,
+                      }]);
+                    }
+                  } catch (e) { console.error("Parse error:", e); }
+                }
+              }
+              read();
+            }).catch(err => {
+              setBacktestRunning(false);
+              setBacktestProgress(null);
+              setMessages(prev => [...prev, { from: "nancy", text: `❌ Connection lost: ${err.message}` }]);
+            });
+          }
+          read();
+        }).catch(err => {
+          setBacktestRunning(false);
+          setBacktestProgress(null);
+          setMessages(prev => [...prev, { from: "nancy", text: `❌ Failed to start backtest: ${err.message}` }]);
+        });
+      };
 
       const handleSend = async () => {
-        if (!input.trim() || thinking) return;
-
+        if (!input.trim() || thinking || backtestRunning) return;
         const userMsg = input.trim();
         setMessages(prev => [...prev, { from: "user", text: userMsg }]);
         setInput("");
         setThinking(true);
-
         try {
-          const response = await fetch("http://localhost:8000/chat", {
+          const res = await fetch(`${BASE}/chat`, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ message: userMsg }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: userMsg, drawings: drawings }),
           });
-
-          let nancyResponseText = "";
-          if (!response.ok) {
-            const errData = await response.json().catch(() => null);
-            nancyResponseText = "Error: " + (errData?.detail?.message || response.statusText || "Failed to communicate with Nancy.");
+          let reply = "";
+          if (!res.ok) {
+            const err = await res.json().catch(() => null);
+            reply = "Error: " + formatApiError(err, res.statusText);
+            setMessages(prev => [...prev, { from: "nancy", text: reply }]);
           } else {
-            const data = await response.json();
-            if (data.type === "chat") {
-              nancyResponseText = data.chat_response;
+            const data = await res.json();
+            if (data.type === "backtest_request") {
+              // Nancy parsed a backtest command — trigger the replay stream
+              if (data.chat_response) {
+                setMessages(prev => [...prev, { from: "nancy", text: data.chat_response }]);
+              }
+              setThinking(false);
+              startBacktestStream({
+                symbol: data.symbol || "EURUSD",
+                timeframe: data.timeframe || "5",
+                start_date: data.start_date || "2024-01-01",
+                max_bars: data.max_bars || 200,
+                step_delay: 0.3,
+                strategy: data.strategy || {},
+                pine_code: data.pine_code,
+              });
+              return; // Don't add another message, startBacktestStream handles it
+            } else if (data.type === "chat") {
+              reply = data.chat_response;
+            } else if (data.type === "analysis") {
+              reply = `**${data.strategy_name || "Strategy Analysis"}**\n\n${data.summary}\n\n**Verdict:** ${data.verdict}\n\n**Reasoning:**\n${data.reasoning}`;
+              if (data.entry_conditions?.length) reply += "\n\n**Entries:**\n- " + data.entry_conditions.join("\n- ");
+              if (data.exit_conditions?.length)  reply += "\n\n**Exits:**\n- " + data.exit_conditions.join("\n- ");
             } else {
-              nancyResponseText = "**" + (data.strategy_name || "Strategy Analysis") + "**\n\n" + data.summary + "\n\n**Verdict:** " + data.verdict + "\n\n**Reasoning:**\n" + data.reasoning;
-              if (data.entry_conditions?.length) {
-                  nancyResponseText += "\n\n**Entries:**\n- " + data.entry_conditions.join('\n- ');
-              }
-              if (data.exit_conditions?.length) {
-                  nancyResponseText += "\n\n**Exits:**\n- " + data.exit_conditions.join('\n- ');
-              }
+              reply = data.chat_response || JSON.stringify(data, null, 2);
             }
+            setMessages(prev => [...prev, { from: "nancy", text: reply }]);
           }
-
-          setMessages(prev => [...prev, { from: "nancy", text: nancyResponseText }]);
-        } catch (error) {
-          console.error("Chat error:", error);
+        } catch (e) {
           setMessages(prev => [...prev, { from: "nancy", text: "Error: Could not connect to the backend server." }]);
         } finally {
           setThinking(false);
         }
       };
 
-      const handleKeyDown = (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          handleSend();
-        }
-      };
+      const handleKey = e => { if (e.key === "Enter") { e.preventDefault(); handleSend(); } };
 
       return (
-        <div style={{
-          flex: 1, display: "flex", flexDirection: "column",
-          borderBottom: "1px solid #0d1f35", overflow: "hidden",
-        }}>
-          <div style={{
-            padding: "10px 16px", borderBottom: "1px solid #0d1f35",
-            background: "#080c18", display: "flex", alignItems: "center", gap: 8
-          }}>
-            <span style={{ fontSize: 11, color: "#00e5ff", fontFamily: "monospace", letterSpacing: "0.12em", fontWeight: 700 }}>
-              AGENT CHAT
-            </span>
-            <span style={{ fontSize: 9, color: "#2a4560", fontFamily: "monospace" }}>
-              — NANCY
-            </span>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Header */}
+          <div style={{ padding: "10px 16px", borderBottom: "1px solid #0d1f35", background: "#080c18", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <span style={{ fontSize: 11, color: "#00e5ff", fontFamily: "monospace", letterSpacing: "0.12em", fontWeight: 700 }}>AGENT CHAT</span>
+            <span style={{ fontSize: 9, color: "#2a4560", fontFamily: "monospace" }}>— NANCY</span>
+            {backtestRunning && (
+              <span style={{
+                fontSize: 9, color: "#ffdd57", fontFamily: "monospace", letterSpacing: "0.1em",
+                marginLeft: "auto", animation: "pulse 1.5s infinite",
+              }}>⚡ BACKTESTING</span>
+            )}
           </div>
 
-          <div style={{
-            flex: 1, overflowY: "auto", padding: "12px 14px",
-            display: "flex", flexDirection: "column", gap: 10,
-            background: "#07091200",
-          }}>
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
             {messages.map((msg, i) => {
               const isNancy = msg.from === "nancy";
+              const isResult = msg.isResult;
               return (
-                <div key={i} style={{
-                  display: "flex", flexDirection: "column",
-                  alignItems: isNancy ? "flex-start" : "flex-end",
-                }}>
-                  <span style={{
-                    fontSize: 9, color: "#2a4560",
-                    fontFamily: "monospace", marginBottom: 3,
-                    letterSpacing: "0.08em"
-                  }}>
+                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: isNancy ? "flex-start" : "flex-end" }}>
+                  <span style={{ fontSize: 9, color: "#2a4560", fontFamily: "monospace", marginBottom: 3, letterSpacing: "0.08em" }}>
                     {isNancy ? "◈ NANCY" : "YOU"}
                   </span>
                   <div style={{
                     maxWidth: "85%", padding: "8px 12px", borderRadius: 3,
-                    background: isNancy ? "#0a1628" : "#091820",
-                    border: "1px solid " + (isNancy ? "#0d2a4a" : "#0d2a1f"),
-                    fontSize: 12,
-                    color: isNancy ? "#a0d0f0" : "#80c0a0",
-                    fontFamily: "monospace",
-                    lineHeight: 1.55,
-                    whiteSpace: "pre-wrap",
+                    background: isResult ? "#0a1a28" : isNancy ? "#0a1628" : "#091820",
+                    border: "1px solid " + (isResult ? "#0d3a4a" : isNancy ? "#0d2a4a" : "#0d2a1f"),
+                    fontSize: 12, color: isNancy ? "#a0d0f0" : "#80c0a0",
+                    fontFamily: "monospace", lineHeight: 1.55, whiteSpace: "pre-wrap",
                   }}>
                     {msg.text}
                   </div>
@@ -401,179 +1078,148 @@
               );
             })}
             
-            {thinking && (
+            {/* Backtest progress bar */}
+            {backtestRunning && backtestProgress && (
               <div style={{
-                display: "flex", flexDirection: "column",
-                alignItems: "flex-start",
+                padding: "10px 12px", borderRadius: 3, background: "#0a1628",
+                border: "1px solid #ffdd5730", fontSize: 11, fontFamily: "monospace",
               }}>
-                <span style={{
-                  fontSize: 9, color: "#2a4560",
-                  fontFamily: "monospace", marginBottom: 3,
-                  letterSpacing: "0.08em"
-                }}>
-                  ◈ NANCY
-                </span>
-                <div style={{
-                    maxWidth: "85%", padding: "8px 12px", borderRadius: 3,
-                    background: "#0a1628", border: "1px solid #0d2a4a",
-                    fontSize: 12, color: "#00e5ff", fontFamily: "monospace",
-                    display: "flex", flexDirection: "column", gap: 6,
-                    minWidth: "120px"
-                  }}>
-                    <div style={{
-                      height: "2px",
-                      width: "100%",
-                      background: "#00e5ff33",
-                      borderRadius: "1px",
-                      overflow: "hidden"
-                    }}>
-                      <div style={{
-                        height: "100%",
-                        background: "#00e5ff",
-                        width: "50%",
-                        animation: "progressPulse 1.5s ease-in-out infinite alternate"
-                      }} />
-                    </div>
-                    <span>Nancy is thinking...</span>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, color: "#ffdd57" }}>
+                  <span>Bar {backtestProgress.bar}/{backtestProgress.total_bars}</span>
+                  <span>{backtestProgress.action?.toUpperCase() || "HOLD"}</span>
+                </div>
+                <div style={{ height: 3, background: "#0d1f35", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}>
+                  <div style={{
+                    height: "100%", background: "#ffdd57", borderRadius: 2,
+                    width: `${(backtestProgress.bar / backtestProgress.total_bars) * 100}%`,
+                    transition: "width 0.3s ease",
+                  }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "#4a7090", fontSize: 10 }}>
+                  <span>Trades: {backtestProgress.total_trades || 0}</span>
+                  <span>Balance: ${backtestProgress.balance || "..."}</span>
+                  <span>Pos: {backtestProgress.position || "FLAT"}</span>
                 </div>
               </div>
             )}
-            <div ref={messagesEndRef} />
+            
+            {thinking && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                <span style={{ fontSize: 9, color: "#2a4560", fontFamily: "monospace", marginBottom: 3, letterSpacing: "0.08em" }}>◈ NANCY</span>
+                <div style={{ padding: "8px 12px", borderRadius: 3, background: "#0a1628", border: "1px solid #0d2a4a", fontSize: 12, color: "#00e5ff", fontFamily: "monospace", display: "flex", flexDirection: "column", gap: 6, minWidth: 140 }}>
+                  <div style={{ height: 2, width: "100%", background: "#00e5ff33", borderRadius: 1, overflow: "hidden" }}>
+                    <div style={{ height: "100%", background: "#00e5ff", width: "50%", animation: "progressPulse 1.5s ease-in-out infinite alternate" }} />
+                  </div>
+                  <span>Nancy is thinking...</span>
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
           </div>
 
-          <div style={{
-            padding: "10px 14px", borderTop: "1px solid #0d1f35",
-            background: "#060a12", display: "flex", gap: 8, alignItems: "center"
-          }}>
+          {/* Input bar */}
+          <div style={{ padding: "10px 14px", borderTop: "1px solid #0d1f35", background: "#060a12", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
             <span style={{ color: "#00e5ff", fontFamily: "monospace", fontSize: 12 }}>›</span>
-            <input
-              type="text"
+            <textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={thinking}
-              placeholder="Ask Nancy something..."
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              disabled={thinking || backtestRunning}
+              placeholder={backtestRunning ? "Backtest in progress..." : drawings.length > 0 ? "Ask about the drawing..." : "Ask Nancy something... (Shift+Enter for new line)"}
+              rows={1}
               style={{
-                flex: 1, fontSize: 12, color: "#e0f0ff",
-                background: "transparent", border: "none", outline: "none",
-                fontFamily: "monospace", letterSpacing: "0.04em"
+                flex: 1, fontSize: 12, color: "#e0f0ff", background: "transparent",
+                border: "none", outline: "none", fontFamily: "monospace", letterSpacing: "0.04em",
+                resize: "none", maxHeight: "150px", overflowY: "auto", padding: "4px 0"
               }}
             />
             <button
               onClick={handleSend}
-              disabled={thinking || !input.trim()}
+              disabled={thinking || backtestRunning || !input.trim()}
               style={{
-                fontSize: 9, color: thinking || !input.trim() ? "#1a3050" : "#00e5ff", 
-                fontFamily: "monospace", background: "transparent",
-                border: "1px solid " + (thinking || !input.trim() ? "#1a3050" : "#00e5ff"), 
-                padding: "2px 8px", borderRadius: 2, cursor: thinking || !input.trim() ? "not-allowed" : "pointer",
-                transition: "all 0.2s"
+                fontSize: 9, fontFamily: "monospace", background: "transparent",
+                color: thinking || backtestRunning || !input.trim() ? "#1a3050" : "#00e5ff",
+                border: "1px solid " + (thinking || backtestRunning || !input.trim() ? "#1a3050" : "#00e5ff"),
+                padding: "2px 8px", borderRadius: 2,
+                cursor: thinking || backtestRunning || !input.trim() ? "not-allowed" : "pointer",
+                transition: "all 0.2s",
               }}>
-              ENTER
+              SEND
             </button>
           </div>
         </div>
       );
     }
 
-    function LogPanel() {
+    // ─── Right Sidebar: LogPanel (top) + ChatPanel (bottom) ──────────────────
+    function RightSidebar({ logs, connected, drawings }) {
       return (
-        <div style={{
-          flex: 1, display: "flex", flexDirection: "column", overflow: "hidden"
-        }}>
-          <div style={{
-            padding: "10px 16px", borderBottom: "1px solid #0d1f35",
-            background: "#080c18", display: "flex", alignItems: "center", justifyContent: "space-between"
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, color: "#00e5ff", fontFamily: "monospace", letterSpacing: "0.12em", fontWeight: 700 }}>
-                LIVE LOG STREAM
-              </span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <span style={{
-                width: 6, height: 6, borderRadius: "50%", background: "#ff3860",
-                display: "inline-block", boxShadow: "0 0 5px #ff3860",
-              }} />
-              <span style={{ fontSize: 9, color: "#ff3860", fontFamily: "monospace", letterSpacing: "0.1em" }}>
-                LIVE
-              </span>
-            </div>
-          </div>
-
-          <div style={{
-            flex: 1, overflowY: "auto", padding: "8px 4px",
-            fontFamily: "monospace", fontSize: 11,
-          }}>
-            {LOGS.map((log, i) => (
-              <div key={i} style={{
-                display: "flex", alignItems: "flex-start", gap: 8,
-                padding: "5px 12px",
-                borderLeft: "2px solid " + LOG_COLORS[log.level] + "22",
-                marginBottom: 1,
-                background: i % 2 === 0 ? "#07091208" : "transparent",
-              }}>
-                <span style={{ color: LOG_COLORS[log.level], fontSize: 9, marginTop: 1, flexShrink: 0 }}>
-                  {LOG_ICONS[log.level]}
-                </span>
-                <span style={{ color: "#2a4560", flexShrink: 0, fontSize: 10 }}>
-                  {log.time}
-                </span>
-                <span style={{
-                  color: LOG_COLORS[log.level], flexShrink: 0,
-                  fontSize: 9, letterSpacing: "0.1em", width: 52,
-                }}>
-                  {"[" + log.level.toUpperCase().padEnd(7) + "]"}
-                </span>
-                <span style={{ color: "#5a8090", lineHeight: 1.4 }}>
-                  {log.msg}
-                </span>
-              </div>
-            ))}
-          </div>
+        <div style={{ flex: "0 0 30%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <LogPanel logs={logs} connected={connected} />
+          <ChatPanel drawings={drawings} />
         </div>
       );
     }
 
-    function RightSidebar() {
-      return (
-        <div style={{
-          flex: "0 0 30%", display: "flex", flexDirection: "column",
-          overflow: "hidden",
-        }}>
-          <ChatPanel />
-          <LogPanel />
-        </div>
-      );
-    }
-
+    // ─── Root App ────────────────────────────────────────────────────────────
     function App() {
-      const [time, setTime] = useState(() => new Date().toLocaleTimeString("en-GB", { hour12: false }));
+      const [time, setTime]           = useState(() => new Date().toLocaleTimeString("en-GB", { hour12: false }));
+      const [logs, setLogs]           = useState([]);
+      const [connected, setConnected] = useState(false);
+      const [drawings, setDrawings]   = useState([]);
+      const MAX_LOGS = 200;
 
+      // Live clock
       useEffect(() => {
-        const timer = setInterval(() => {
-          setTime(new Date().toLocaleTimeString("en-GB", { hour12: false }));
-        }, 1000);
-        return () => clearInterval(timer);
+        const t = setInterval(() => setTime(new Date().toLocaleTimeString("en-GB", { hour12: false })), 1000);
+        return () => clearInterval(t);
+      }, []);
+
+      // SSE log stream from backend
+      useEffect(() => {
+        let es;
+        function connect() {
+          es = new EventSource(`${BASE}/logs/stream`);
+
+          es.onopen = () => setConnected(true);
+
+          es.onmessage = e => {
+            try {
+              const entry = JSON.parse(e.data);
+              setLogs(prev => {
+                const next = [...prev, entry];
+                return next.length > MAX_LOGS ? next.slice(next.length - MAX_LOGS) : next;
+              });
+            } catch (_) {}
+          };
+
+          es.onerror = () => {
+            setConnected(false);
+            es.close();
+            setTimeout(connect, 3000);
+          };
+        }
+        connect();
+        return () => es && es.close();
       }, []);
 
       return (
-        <div style={{
-          display: "flex", flexDirection: "column",
-          height: "100vh", width: "100vw",
-          background: "#060a12", overflow: "hidden",
-        }}>
-          <TopBar time={time} />
+        <div style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100vw", background: "#060a12", overflow: "hidden" }}>
+          <TopBar time={time} connected={connected} />
           <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-            <ChartPanel />
-            <RightSidebar />
+            <ChartPanel drawings={drawings} setDrawings={setDrawings} />
+            <RightSidebar logs={logs} connected={connected} drawings={drawings} />
           </div>
         </div>
       );
     }
 
-    const root = ReactDOM.createRoot(document.getElementById("root"));
-    root.render(<App />);
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
 </html>

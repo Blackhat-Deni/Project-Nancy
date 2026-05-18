@@ -1,0 +1,84 @@
+Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+Failed to send telemetry event CollectionGetEvent: capture() takes 1 positional argument but 3 were given
+[INFO] Found 40 file(s) in /home/deni/Project Nancy V.1.0/project-nancy/data/strategies
+[INFO] Already ingested files: {'pine_script_execution_model.md', 'overview.md', 'ta.md', 'backgrounds.md', 'plots.md', 'timeframes.md', 'variables.md', 'common_errors.md', 'tables.md', 'style_guide.md', 'keywords.md', 'execution_model.md', 'texts_and_shapes.md', 'publishing_scripts.md', 'debugging.md', 'colors_and_display.md', 'bar_plotting.md', 'profiling_and_optimization.md', 'release_notes.md', 'operators.md', 'fills.md', 'pinescriptv6_complete_reference.md', 'LLM_MANIFEST.md', 'constants.md', 'bar_coloring.md', 'colors.md', 'lines_and_boxes.md', 'methods.md', 'limitations.md', 'README.md', 'request.md', 'objects.md', 'types.md', 'levels.md', 'annotations.md'}
+[INFO] Loading embedding model: all-MiniLM-L6-v2
+[INFO] Embedding model loaded successfully.
+
+============================================================
+[PROCESSING] John_J._Murphy_-_Technical_Analysis_Of_The_Financial_Markets.pdf
+============================================================
+[INFO] Converting PDF with Docling: John_J._Murphy_-_Technical_Analysis_Of_The_Financial_Markets.pdf
+[INFO] Extracted 671414 characters from John_J._Murphy_-_Technical_Analysis_Of_The_Financial_Markets.pdf
+[INFO] Split into 1493 chunks (size=500, overlap=50)
+[INFO] Generating embeddings for 1493 chunks...
+Batches:   0%|          | 0/47 [00:00<?, ?it/s]Batches:  13%|█▎        | 6/47 [00:00<00:00, 51.86it/s]Batches:  30%|██▉       | 14/47 [00:00<00:00, 63.14it/s]Batches:  45%|████▍     | 21/47 [00:00<00:00, 65.68it/s]Batches:  60%|█████▉    | 28/47 [00:00<00:00, 61.41it/s]Batches:  74%|███████▍  | 35/47 [00:00<00:00, 63.58it/s]Batches:  89%|████████▉ | 42/47 [00:00<00:00, 61.28it/s]Batches: 100%|██████████| 47/47 [00:00<00:00, 61.27it/s]
+Failed to send telemetry event CollectionAddEvent: capture() takes 1 positional argument but 3 were given
+[INFO] Storing 1493 chunks in ChromaDB...
+[DONE] John_J._Murphy_-_Technical_Analysis_Of_The_Financial_Markets.pdf – 1493 chunks ingested successfully.
+[SKIP] LLM_MANIFEST.md has already been ingested – skipping.
+[SKIP] README.md has already been ingested – skipping.
+[SKIP] colors_and_display.md has already been ingested – skipping.
+[SKIP] common_errors.md has already been ingested – skipping.
+[SKIP] execution_model.md has already been ingested – skipping.
+[SKIP] methods.md has already been ingested – skipping.
+[SKIP] objects.md has already been ingested – skipping.
+[SKIP] timeframes.md has already been ingested – skipping.
+[SKIP] pine_script_execution_model.md has already been ingested – skipping.
+[SKIP] pinescriptv6_complete_reference.md has already been ingested – skipping.
+[SKIP] annotations.md has already been ingested – skipping.
+[SKIP] constants.md has already been ingested – skipping.
+
+============================================================
+[PROCESSING] collections.md
+============================================================
+[INFO] Reading md file directly: collections.md
+[WARNING] No text extracted from collections.md – skipping.
+
+============================================================
+[PROCESSING] drawing.md
+============================================================
+[INFO] Reading md file directly: drawing.md
+[WARNING] No text extracted from drawing.md – skipping.
+
+============================================================
+[PROCESSING] general.md
+============================================================
+[INFO] Reading md file directly: general.md
+[WARNING] No text extracted from general.md – skipping.
+[SKIP] request.md has already been ingested – skipping.
+
+============================================================
+[PROCESSING] strategy.md
+============================================================
+[INFO] Reading md file directly: strategy.md
+[WARNING] No text extracted from strategy.md – skipping.
+[SKIP] ta.md has already been ingested – skipping.
+[SKIP] keywords.md has already been ingested – skipping.
+[SKIP] operators.md has already been ingested – skipping.
+[SKIP] types.md has already been ingested – skipping.
+[SKIP] variables.md has already been ingested – skipping.
+[SKIP] release_notes.md has already been ingested – skipping.
+[SKIP] backgrounds.md has already been ingested – skipping.
+[SKIP] bar_coloring.md has already been ingested – skipping.
+[SKIP] bar_plotting.md has already been ingested – skipping.
+[SKIP] colors.md has already been ingested – skipping.
+[SKIP] fills.md has already been ingested – skipping.
+[SKIP] levels.md has already been ingested – skipping.
+[SKIP] lines_and_boxes.md has already been ingested – skipping.
+[SKIP] overview.md has already been ingested – skipping.
+[SKIP] plots.md has already been ingested – skipping.
+[SKIP] tables.md has already been ingested – skipping.
+[SKIP] texts_and_shapes.md has already been ingested – skipping.
+[SKIP] debugging.md has already been ingested – skipping.
+[SKIP] limitations.md has already been ingested – skipping.
+[SKIP] profiling_and_optimization.md has already been ingested – skipping.
+[SKIP] publishing_scripts.md has already been ingested – skipping.
+[SKIP] style_guide.md has already been ingested – skipping.
+
+============================================================
+[SUMMARY] Ingestion complete.
+[SUMMARY] New chunks added this run: 1493
+[SUMMARY] Total chunks in collection: 5850
+============================================================
